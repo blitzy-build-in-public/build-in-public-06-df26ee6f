@@ -55,32 +55,31 @@ const suppliedId = '9c8f5b1e-6f2a-4a1d-9c77-2f0b1d3e4a55';
 const suppliedTimestamp = '2026-02-01T09:15:00.000Z';
 
 /**
- * Every message a validator returned while this suite ran. The drift guard at the end of the file
- * reads it to prove the validators produce the messages of the one message record rather than
- * copies of their own.
- */
-const observedMessages = new Set<string>();
-
-/** Records the messages a field map holds, then returns it so the call site stays one assertion. */
-function record(errors: FieldErrors): FieldErrors {
-  for (const message of Object.values(errors)) {
-    observedMessages.add(message);
-  }
-  return errors;
-}
-
-/**
- * Asserts the exact field map a create body produces, and records the messages it held.
+ * Asserts the exact field map a create body produces.
  *
  * The whole map is compared, so each case proves its message and that no other key was invented.
  */
 function expectNewTaskErrors(input: NewTaskInput, expected: FieldErrors): void {
-  expect(record(validateNewTask(input))).toEqual(expected);
+  expect(validateNewTask(input)).toEqual(expected);
 }
 
-/** Asserts the exact field map a patch body produces, and records the messages it held. */
+/** Asserts the exact field map a patch body produces, against the validator's own return value. */
 function expectPatchErrors(patch: TaskPatch, expected: FieldErrors): void {
-  expect(record(validatePatch(patch))).toEqual(expected);
+  expect(validatePatch(patch)).toEqual(expected);
+}
+
+/**
+ * A request body exactly as the JSON text arrives.
+ *
+ * `JSON.parse` creates every key it reads as an own property, `__proto__` included, which no object
+ * literal can express: `{ __proto__: … }` sets the object's prototype instead of creating a key, so
+ * the validator would never be handed the name under test.
+ *
+ * @param json The body text, as a client sends it.
+ * @returns The parsed body, carrying exactly the JSON object's own keys.
+ */
+function parseBody(json: string): Record<string, unknown> {
+  return JSON.parse(json);
 }
 
 describe('validateNewTask', () => {
@@ -166,6 +165,36 @@ describe('validateNewTask', () => {
         { title: 'Title must be 200 characters or fewer' },
       );
     });
+
+    /**
+     * The bound counts the characters a reader sees, so a character outside the basic plane counts
+     * once even though a surrogate pair stores it in two UTF-16 code units. Each case states its own
+     * width in code units and asserts it, so the pair proves which unit the bound uses.
+     */
+    const astralTitles: {
+      name: string;
+      title: string;
+      codeUnits: number;
+      expected: FieldErrors;
+    }[] = [
+      {
+        name: 'accepts a title of 200 astral characters',
+        title: '🎉'.repeat(TITLE_MAX_LENGTH),
+        codeUnits: TITLE_MAX_LENGTH * 2,
+        expected: {},
+      },
+      {
+        name: 'rejects a title of 201 astral characters',
+        title: '🎉'.repeat(TITLE_MAX_LENGTH + 1),
+        codeUnits: (TITLE_MAX_LENGTH + 1) * 2,
+        expected: { title: 'Title must be 200 characters or fewer' },
+      },
+    ];
+
+    it.each(astralTitles)('$name', ({ title, codeUnits, expected }) => {
+      expect(title).toHaveLength(codeUnits);
+      expectNewTaskErrors({ title }, expected);
+    });
   });
 
   describe('the description rule', () => {
@@ -196,6 +225,32 @@ describe('validateNewTask', () => {
         { title: validTitle, description: paddedOverDescriptionMax },
         { description: 'Description must be 2000 characters or fewer' },
       );
+    });
+
+    /** The description half of the code-point bound, measured the same way as the title's. */
+    const astralDescriptions: {
+      name: string;
+      description: string;
+      codeUnits: number;
+      expected: FieldErrors;
+    }[] = [
+      {
+        name: 'accepts a description of 2000 astral characters',
+        description: '🎉'.repeat(DESCRIPTION_MAX_LENGTH),
+        codeUnits: DESCRIPTION_MAX_LENGTH * 2,
+        expected: {},
+      },
+      {
+        name: 'rejects a description of 2001 astral characters',
+        description: '🎉'.repeat(DESCRIPTION_MAX_LENGTH + 1),
+        codeUnits: (DESCRIPTION_MAX_LENGTH + 1) * 2,
+        expected: { description: 'Description must be 2000 characters or fewer' },
+      },
+    ];
+
+    it.each(astralDescriptions)('$name', ({ description, codeUnits, expected }) => {
+      expect(description).toHaveLength(codeUnits);
+      expectNewTaskErrors({ title: validTitle, description }, expected);
     });
   });
 
@@ -329,6 +384,36 @@ describe('validateNewTask', () => {
     // would otherwise have silently discarded.
     it.each(unknownFields)('rejects $name', ({ input, expected }) => {
       expectNewTaskErrors(input, expected);
+    });
+
+    /**
+     * A property named `__proto__` is the one unknown name that is also an accessor on
+     * `Object.prototype`, so it is the name that proves the map stores what a body carries as data.
+     * The bodies are parsed rather than written as literals: see {@link parseBody}.
+     */
+    const protoBodies: { name: string; json: string }[] = [
+      {
+        name: 'a __proto__ property holding an object',
+        json: '{"title":"Buy milk","__proto__":{"polluted":true}}',
+      },
+      {
+        name: 'a __proto__ property holding a string',
+        json: '{"title":"Buy milk","__proto__":"polluted"}',
+      },
+    ];
+
+    it.each(protoBodies)('reports $name under that name, as an own key of the map', ({ json }) => {
+      const errors = validateNewTask(parseBody(json));
+
+      expect(Object.keys(errors)).toStrictEqual(['__proto__']);
+      expect(errors['__proto__']).toBe('Unknown field');
+      // The map stays an ordinary object: had the name reached it as an assignment it would have
+      // run the inherited accessor, which stores nothing and, for an object value, replaces this
+      // map's prototype with the body's.
+      expect(Object.getPrototypeOf(errors)).toBe(Object.prototype);
+      // Own and enumerable is what carries the name to the client, which reads it from the field
+      // map of the error body.
+      expect(JSON.stringify(errors)).toBe('{"__proto__":"Unknown field"}');
     });
   });
 
@@ -537,6 +622,26 @@ describe('validatePatch', () => {
     it('rejects an unknown property with the same message as a create body', () => {
       expectPatchErrors({ title: 'Buy oat milk', foo: 1 }, { foo: 'Unknown field' });
     });
+
+    /**
+     * The same name reached from a patch body, where the offending key is the whole body: the map
+     * holds that one own key and nothing else.
+     */
+    const protoPatches: { name: string; json: string }[] = [
+      {
+        name: 'a lone __proto__ property holding an object',
+        json: '{"__proto__":{"polluted":true}}',
+      },
+      { name: 'a lone __proto__ property holding a string', json: '{"__proto__":"polluted"}' },
+    ];
+
+    it.each(protoPatches)('rejects $name under its own name', ({ json }) => {
+      const errors = validatePatch(parseBody(json));
+
+      expect(Object.keys(errors)).toStrictEqual(['__proto__']);
+      expect(errors['__proto__']).toBe('Unknown field');
+      expect(Object.getPrototypeOf(errors)).toBe(Object.prototype);
+    });
   });
 
   describe('per-field accumulation', () => {
@@ -719,16 +824,70 @@ function collectMessages(value: unknown): string[] {
 }
 
 describe('FIELD_MESSAGES drift guard', () => {
-  // Declared last on purpose: it reads the messages every validator case above produced.
+  /**
+   * One validator call per message the two validators can produce, provoked inside the guard itself
+   * rather than read from the cases above it: the guard then holds when it is the only case selected,
+   * and it needs no shared state and no ordering.
+   *
+   * The create side supplies the required, over-long and non-string title, the over-long and
+   * non-string description, the unsupported priority, the malformed due date, the well-shaped due
+   * date that is no calendar date and the completion supplied on a create; the patch side supplies
+   * the completion that is not a boolean, the unknown property and the three read-only names.
+   */
+  const provokingCalls: { name: string; validate: () => FieldErrors }[] = [
+    { name: 'a missing title', validate: () => validateNewTask({}) },
+    { name: 'an over-long title', validate: () => validateNewTask({ title: overTitleMax }) },
+    { name: 'a title of another kind', validate: () => validateNewTask({ title: 3 }) },
+    {
+      name: 'an over-long description',
+      validate: () => validateNewTask({ title: validTitle, description: overDescriptionMax }),
+    },
+    {
+      name: 'a description of another kind',
+      validate: () => validateNewTask({ title: validTitle, description: null }),
+    },
+    {
+      name: 'an unsupported priority',
+      validate: () => validateNewTask({ title: validTitle, priority: 'urgent' }),
+    },
+    {
+      name: 'a malformed due date',
+      validate: () => validateNewTask({ title: validTitle, dueDate: '2026-2-4' }),
+    },
+    {
+      name: 'a well-shaped due date that is no calendar date',
+      validate: () => validateNewTask({ title: validTitle, dueDate: '2026-02-30' }),
+    },
+    {
+      name: 'a completion supplied on a create',
+      validate: () => validateNewTask({ title: validTitle, completed: true }),
+    },
+    {
+      name: 'a completion that is not a boolean',
+      validate: () => validatePatch({ completed: 'yes' }),
+    },
+    { name: 'an unknown property', validate: () => validatePatch({ colour: 'red' }) },
+    { name: 'a supplied id', validate: () => validatePatch({ id: suppliedId }) },
+    { name: 'a supplied createdAt', validate: () => validatePatch({ createdAt: suppliedTimestamp }) },
+    { name: 'a supplied updatedAt', validate: () => validatePatch({ updatedAt: suppliedTimestamp }) },
+  ];
+
   it('holds every message the validators returned', () => {
     const declared = collectMessages(FIELD_MESSAGES);
 
-    // The suite returned messages, so the check below cannot pass on an empty list.
-    expect(observedMessages.size).toBeGreaterThan(0);
+    const observed = new Set<string>();
+    for (const { validate } of provokingCalls) {
+      for (const message of Object.values(validate())) {
+        observed.add(message);
+      }
+    }
+
+    // The calls returned messages, so the check below cannot pass on an empty list.
+    expect(observed.size).toBeGreaterThan(0);
 
     // One direction only: the record may hold a message no domain validator returns, because the
     // empty patch is rejected upstream, but a validator may never invent a message of its own.
-    const undeclared = [...observedMessages].filter((message) => !declared.includes(message));
+    const undeclared = [...observed].filter((message) => !declared.includes(message));
     expect(undeclared).toEqual([]);
   });
 });

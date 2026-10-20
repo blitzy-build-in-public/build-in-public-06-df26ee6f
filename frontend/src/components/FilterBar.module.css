@@ -67,9 +67,10 @@
   color: var(--color-text);
 }
 
-/* From 480px the three controls share one row. They wrap rather than overflow, so a
-   viewport wider than 320px but too narrow for three controls at a legible size falls
-   back to two rows instead of to a scrollbar. */
+/* A zero flex-basis is what puts the three controls on one row from 480px: a control's base
+   size is then nothing rather than the width of its longest option, so all three always fit
+   the line and grow into an equal share of it. `flex-wrap: wrap` on `.bar` stays as the
+   guard — a child that cannot shrink below its content still wraps rather than overflowing. */
 @media (min-width: 480px) {
   .bar {
     flex-direction: row;
@@ -78,7 +79,7 @@
   }
 
   .control {
-    flex: 1 1 auto;
+    flex: 1 1 0;
     min-inline-size: 0;
   }
 }

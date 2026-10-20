@@ -17,7 +17,7 @@
  * I/O, and no task content is ever logged.
  */
 
-import { parseTaskQuery } from '../../application/taskQuery.js';
+import { parseTaskQuery, QUERY_PARAMETER_MESSAGES } from '../../application/taskQuery.js';
 import type { TaskQuery } from '../../application/taskQuery.js';
 import { VALIDATION_ERROR_MESSAGE, ValidationError } from '../../domain/errors.js';
 import type { NewTaskInput, TaskPatch } from '../../domain/task.js';
@@ -114,16 +114,20 @@ export function parsePatchBody(raw: unknown): TaskPatch {
  */
 const LIST_QUERY_PARAMETERS = Object.freeze(['status', 'priority', 'sort'] as const);
 
+/** The name of one of them, which is also the field key its rejection carries. */
+type QueryParameterName = (typeof LIST_QUERY_PARAMETERS)[number];
+
 /**
  * Builds the failure for a parameter that arrived with more than one value.
  *
- * The template is written once for all three parameters. It is a statement about the request's
- * shape, which the domain does not own, so it belongs here rather than in a message record — and
- * the parameter's own name is the field key, so the interface can place the message beside the
- * control that produced it.
+ * The parameter's own name is the field key, so the interface can place the message beside the
+ * control that produced it. The message itself is the one the contract fixes for that parameter —
+ * the validation table lists a repeated value among each parameter row's rules — and it is read
+ * from the application module that owns it rather than templated here, so the text cannot drift
+ * from the wording an unsupported value is rejected with.
  */
-function singleValueError(name: string): ValidationError {
-  const message = `${name} must be a single value`;
+function singleValueError(name: QueryParameterName): ValidationError {
+  const message = QUERY_PARAMETER_MESSAGES[name];
   return new ValidationError(message, { [name]: message });
 }
 
@@ -141,8 +145,9 @@ function singleValueError(name: string): ValidationError {
  *
  * @param raw The parsed query record, of unknown shape.
  * @returns The complete listing query, with every default applied.
- * @throws {ValidationError} when a known parameter carries more than one value, or when
- *   {@link parseTaskQuery} rejects a value outside its accepted set.
+ * @throws {ValidationError} when a known parameter carries more than one value, reported under the
+ *   parameter's own name with the message the contract fixes for it, or when {@link parseTaskQuery}
+ *   rejects a value outside its accepted set.
  */
 export function parseQuery(raw: unknown): TaskQuery {
   // The query parser always yields an object, so this guard is defensive only: a value of another
@@ -168,32 +173,38 @@ export function parseQuery(raw: unknown): TaskQuery {
 }
 
 /**
- * The failure for the path parameter, which no registered route can produce — see {@link parseId}.
+ * The failure for a request whose path parameters carry no string `id` — see {@link parseId}.
+ *
+ * The router supplies `:id` as a string on every request that matches the route, the empty string
+ * included, so this message answers a `request.params` value of another shape rather than a request
+ * whose identifier is missing from the path.
  */
 const MISSING_ID_MESSAGE = 'Path parameter id is required';
 
 /**
  * Reads the `id` path parameter, without judging it.
  *
- * The guard is defensive rather than reachable: a registered route always supplies `:id`, so
- * `params.id` is a non-empty string on every request this function sees, but `request.params` is
- * `unknown` at the type level and the return type has to be honest about that rather than assert
- * the value's presence.
+ * An empty identifier is a real request, not a defect: the router matches the trailing-slash path
+ * `/api/tasks/` with the `:id` route and supplies `''` for the parameter. Every string is therefore
+ * passed through as the client supplied it — empty, malformed or otherwise — so that an identifier
+ * matching no task reaches the use case and yields 404 rather than being rejected here as 400, which
+ * is what keeps a malformed identifier indistinguishable by design from a deleted one.
+ *
+ * The one rejection raised here is a `params` record that is not an object or whose `id` is not a
+ * string: `request.params` is `unknown` at the type level, so the return type has to be honest about
+ * the value's presence, while the router produces a string for every request that reaches a route.
  *
  * No format check of any kind is performed, deliberately. An identifier matching no task must yield
- * 404 rather than 400, so a malformed identifier is indistinguishable by design from one whose task
- * was deleted; the `TaskNotFoundError` a use case raises is what produces that status, and this
- * function passes the raw string through untouched.
+ * 404 rather than 400, and the `TaskNotFoundError` a use case raises is what produces that status.
  *
  * @param params The path parameters, of unknown shape.
- * @returns The identifier as the client supplied it.
- * @throws {ValidationError} with an empty field map only on the unreachable case above, naming the
- *   missing parameter.
+ * @returns The identifier as the client supplied it, the empty string included.
+ * @throws {ValidationError} with an empty field map when `params` carries no string `id` at all.
  */
 export function parseId(params: unknown): string {
   if (isPlainObject(params)) {
     const id = params['id'];
-    if (typeof id === 'string' && id.length > 0) {
+    if (typeof id === 'string') {
       return id;
     }
   }

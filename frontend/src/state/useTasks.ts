@@ -14,9 +14,10 @@
  *   the server committed and no conflict state has to exist.
  * - There is exactly one place a list load happens — the effect below — and every trigger for one
  *   (the initial mount, a filter change, a retry, the refetch after an action, the refetch after a
- *   task has disappeared) is expressed as a change to that effect's dependencies. A load shows as
- *   `'loading'` for as long as the newest request has not answered, which is a fact derived from
- *   the request the last answer belongs to rather than a flag set alongside the request.
+ *   task has disappeared) is expressed as a change to that effect's dependencies, each trigger
+ *   taking the next sequence number. A load shows as `'loading'` for as long as the newest request
+ *   has not answered, which is a fact derived from the sequence number the last answer recorded
+ *   rather than a flag set alongside the request.
  * - A failed action never touches the load state. `error` is non-null only while `status` is
  *   `'error'`, which the list renders as its retryable whole-list failure; writing an action's
  *   failure there would replace the user's list with an error screen while their form is still
@@ -53,35 +54,23 @@ export const LIST_ERROR_MESSAGE = 'Could not load tasks. The server may be unrea
 const MISSING_TASK_NOTICE = 'That task no longer exists.';
 
 /**
- * The outcome of the newest list request that has answered, together with the identity of the
- * request it belongs to.
+ * The outcome of the newest list request that has answered, together with the sequence number of
+ * the request it belongs to.
  *
- * The identity is what makes a request's answer recognisable: while the request the screen is
- * waiting on differs from the one this outcome describes, nothing has answered for the current
- * filters and the list is still loading. Held as one value so `status` and `error` can never
- * disagree about which request they describe.
+ * The sequence number is what makes a request's answer recognisable: while the request the screen
+ * is waiting on carries a later one than this outcome describes, nothing has answered for the
+ * filters in force and the list is still loading. Held as one value so `status` and `error` can
+ * never disagree about which request they describe.
  */
 interface CompletedLoad {
-  /** The request this outcome belongs to, spelled as `requestKey` spells it. */
-  request: string;
-  /** That request's outcome: a list was read, or the read failed. */
+  /** The sequence number of the load this outcome answers. */
+  sequence: number;
+  /** That load's outcome: a list was read, or the read failed. */
   status: 'ready' | 'error';
 }
 
-/**
- * The identity of one list request: the filters it applies and the reload it belongs to, as a
- * value equal only to that of an identical request.
- *
- * A string rather than an object so a comparison is by value: a re-render that leaves the filters
- * and the reload count alone produces an equal key and starts no load, and a changed filter or a
- * bumped reload count produces a different one and does.
- */
-function requestKey(filters: TaskFilters, reloadToken: number): string {
-  return `${filters.status}|${filters.priority ?? ''}|${filters.sort}|${reloadToken}`;
-}
-
 /** Which of the three list states the hook is in. */
-export type UseTasksStatus = 'loading' | 'ready' | 'error';
+type UseTasksStatus = 'loading' | 'ready' | 'error';
 
 /** Everything `App.tsx` and its components consume from `useTasks`. */
 export interface UseTasksResult {
@@ -110,17 +99,18 @@ export interface UseTasksResult {
    * settled since the last one was handled.
    *
    * Read by the caller that awaited the action, the moment it resolves `false`. The four actions
-   * above report their outcome as a `Promise<boolean>`, which cannot carry the message, the code
-   * and the field map a rejected request arrived with, and a state field could not carry them
-   * either: a value written while the promise settles is not readable from the closure that
-   * resumed after it. So the rejection is held here instead, where that caller reads it
-   * synchronously, and the form it belongs to places each field message beside the control the
-   * server named and the message above the fields when it named none.
+   * above answer with a `Promise<boolean>`, which has no room for the message, the code and the
+   * field map a rejected request arrived with, and no component below `App.tsx` may reach the API
+   * client to read them for itself; a state field could not carry them either, because a value
+   * written while the promise settles is not readable from the closure that resumed after it. So
+   * the rejection is held here instead, where that caller reads it synchronously, and the form it
+   * belongs to places each field message beside the control the server named and the message above
+   * the fields when it named none.
    *
-   * This member is an addition to the result this hook's contract lists, and it exists because
-   * that behaviour is required of the create and edit form: without it a rejected save reaches the
+   * Held here because the result offers no other channel: without it a rejected save reaches the
    * form as the `false` alone, and the server's message — the whole of what the user is told — has
-   * nowhere to be read from.
+   * nowhere to be read from. It is the one member this result carries beyond the twelve it is
+   * specified with, and it cannot be dropped without the form losing the server's field messages.
    */
   readActionFailure(): unknown;
   /** Refetches the list with the filters that are active. */
@@ -135,17 +125,20 @@ export function useTasks(api: TaskApi): UseTasksResult {
   const [completedLoad, setCompletedLoad] = useState<CompletedLoad | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [filters, setFiltersState] = useState<TaskFilters>(DEFAULT_FILTERS);
-  const [reloadToken, setReloadToken] = useState(0);
+  // The number every load is stamped with. Each trigger of one takes the next number, and a
+  // request is only read as the load in force while the number it carries is still this one — so
+  // a request for a filter set some earlier answer already described is still a load of its own.
+  const [loadSequence, setLoadSequence] = useState(0);
 
   // The channel `readActionFailure` reads. A ref rather than a piece of state because the caller
   // that awaited an action reads it as soon as that action resolves `false`, before any render the
   // state update would need.
   const actionFailureRef = useRef<unknown>(null);
 
-  // A load is in flight until an answer arrives for the request the current filters and reload
-  // count spell: nothing has answered yet, or the only answer so far describes an earlier request.
+  // A load is in flight until an answer arrives for the request the current sequence number stamps:
+  // nothing has answered yet, or the only answer so far describes a load with an earlier number.
   const status: UseTasksStatus =
-    completedLoad !== null && completedLoad.request === requestKey(filters, reloadToken)
+    completedLoad !== null && completedLoad.sequence === loadSequence
       ? completedLoad.status
       : 'loading';
 
@@ -157,6 +150,10 @@ export function useTasks(api: TaskApi): UseTasksResult {
    * The one list load: a single request per trigger, and a single place `status` moves to `'ready'`
    * or `'error'`.
    *
+   * The sequence number of the run that started this request is captured here, so each outcome the
+   * request produces carries the load it answers: a later trigger stamps a later number, and only
+   * an answer carrying the number the screen is waiting on moves `status` off `'loading'`.
+   *
    * `ignore` is what makes the effect safe to tear down: an answer to a superseded request — a
    * filter changed while it was in flight, or the second mount under `StrictMode` in development —
    * must never describe the request the screen is now waiting on. `listTasks` takes no
@@ -165,7 +162,7 @@ export function useTasks(api: TaskApi): UseTasksResult {
   useEffect(() => {
     let ignore = false;
 
-    const requested = requestKey(filters, reloadToken);
+    const sequence = loadSequence;
 
     api.listTasks(filters).then(
       (loaded) => {
@@ -173,7 +170,7 @@ export function useTasks(api: TaskApi): UseTasksResult {
           return;
         }
         setTasks(loaded);
-        setCompletedLoad({ request: requested, status: 'ready' });
+        setCompletedLoad({ sequence, status: 'ready' });
       },
       () => {
         if (ignore) {
@@ -181,37 +178,43 @@ export function useTasks(api: TaskApi): UseTasksResult {
         }
         // The tasks already on screen are kept: only the load state changes, so a retry has a list
         // to fall back on and the failure object itself is never put into state.
-        setCompletedLoad({ request: requested, status: 'error' });
+        setCompletedLoad({ sequence, status: 'error' });
       },
     );
 
     return () => {
       ignore = true;
     };
-  }, [api, filters, reloadToken]);
+  }, [api, filters, loadSequence]);
 
   /** Asks the effect above for another load, leaving the active filters in place. */
   const reload = useCallback(() => {
-    setReloadToken((token) => token + 1);
+    setLoadSequence((sequence) => sequence + 1);
   }, []);
 
   const retry = useCallback(() => {
     reload();
   }, [reload]);
 
+  /**
+   * Applies the whole next filter set and always refetches. The sequence bump is what makes this
+   * a load of its own even when the set is one an earlier answer already described — which is what
+   * the filter bar emits whenever a control reports the value it already had.
+   */
   const setFilters = useCallback((next: TaskFilters) => {
     setFiltersState(next);
+    setLoadSequence((sequence) => sequence + 1);
   }, []);
 
   /**
-   * Restores the default filters and always refetches. The token bump covers the case where the
-   * filters were already the defaults, which alone would leave the effect's dependencies
-   * unchanged; when they were not, React batches both updates into one commit and the effect runs
-   * once for the cleared filters.
+   * Restores the default filters and always refetches. The sequence bump covers the case where the
+   * filters were already the defaults, which alone would leave the effect's dependencies unchanged;
+   * when they were not, React batches both updates into one commit and the effect runs once for the
+   * cleared filters.
    */
   const clearFilters = useCallback(() => {
     setFiltersState(DEFAULT_FILTERS);
-    setReloadToken((token) => token + 1);
+    setLoadSequence((sequence) => sequence + 1);
   }, []);
 
   /**

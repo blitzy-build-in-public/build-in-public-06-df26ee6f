@@ -124,6 +124,28 @@ npm run typecheck
 
 `tsc --noEmit` in each workspace.
 
+`npm run typecheck` covers the three compiler programs: the backend program
+(`backend/tsconfig.json`) covers `backend/src` alone, the frontend app program
+(`frontend/tsconfig.json`) covers `frontend/src` and `frontend/tests`, and
+`frontend/tsconfig.node.json` covers `frontend/vite.config.ts`. Four groups of delivered files
+belong to none of the three, so that command does not type-check them: every file under
+`backend/tests/**` and `e2e/**`, plus `backend/vitest.config.ts` and `playwright.config.ts`. The
+backend program takes `src` alone because it sets `rootDir: "src"` and emits `dist`: adding `tests`
+to its `include` raises TS6059, and dropping `rootDir` to admit them would emit `dist/src/main.js`,
+which `npm start` does not run. Each of those files is transpiled and executed by its own runner
+instead — Vitest for the backend test tree and its configuration, Playwright for the end-to-end
+configuration and the files under `e2e/**` — and no compiler program and no lint rule type-checks
+any of them.
+
+The frontend program's Node types are hoisted, and that hoisting is a contract.
+`frontend/tsconfig.node.json` names `"node"` in its `types` because `frontend/vite.config.ts` reads
+`process.env.PORT` to build the `/api` proxy target, and the program resolves those types from
+`@types/node`, which the frontend manifest does not declare: `backend/package.json` declares it
+once, as `"@types/node": "20.19.43"`, and the single npm-workspace install hoists it to the
+repository-root `node_modules`, which is where the frontend program resolves it from. That
+devDependency is therefore part of the frontend's `typecheck` script: it must stay declared in
+`backend/package.json`, because the frontend half of `npm run typecheck` depends on it.
+
 The whole verification run, from a clean checkout:
 
 ```bash

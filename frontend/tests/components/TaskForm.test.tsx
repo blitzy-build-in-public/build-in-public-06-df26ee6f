@@ -61,6 +61,18 @@ const EDIT_TASK: Task = makeTask({
 const TITLE_AT_MAX = 'a'.repeat(200);
 
 /**
+ * The same title bound written in astral characters, which are two UTF-16 code units each, so this
+ * title is 200 characters and 400 code units long.
+ */
+const ASTRAL_TITLE_AT_MAX = '🎉'.repeat(200);
+
+/** One astral character past that bound. */
+const ASTRAL_TITLE_OVER_MAX = '🎉'.repeat(201);
+
+/** A description of exactly the length the description field allows, which its boundary case must send. */
+const DESCRIPTION_AT_MAX = 'a'.repeat(2000);
+
+/**
  * A promise the case settles by hand, so a pending save can be observed while it lasts.
  *
  * `resolve` starts as a no-op that the promise executor replaces before `createDeferred` returns,
@@ -202,6 +214,83 @@ describe('TaskForm — checks made before a request is sent', () => {
     expect(screen.queryByText('Title must be 200 characters or fewer')).not.toBeInTheDocument();
   });
 
+  it('accepts a description of exactly the 2000 characters the field allows', async () => {
+    const user = userEvent.setup();
+    const deferred = createDeferred();
+    const onSubmit = submitMock().mockReturnValue(deferred.promise);
+    renderCreateForm(onSubmit);
+
+    const description = screen.getByRole('textbox', { name: 'Description' });
+
+    await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Buy milk');
+    await user.click(description);
+    await user.paste(DESCRIPTION_AT_MAX);
+    await user.click(screen.getByRole('button', { name: CREATE_LABEL }));
+
+    // The bound is the server's, so a description of exactly 2000 characters travels whole: only a
+    // longer one is refused.
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit).toHaveBeenCalledWith({
+      title: 'Buy milk',
+      description: DESCRIPTION_AT_MAX,
+      priority: 'medium',
+      dueDate: null,
+    });
+    expect(
+      screen.queryByText('Description must be 2000 characters or fewer'),
+    ).not.toBeInTheDocument();
+    expect(description).toHaveValue(DESCRIPTION_AT_MAX);
+
+    await act(async () => {
+      deferred.resolve(true);
+      await deferred.promise;
+    });
+  });
+
+  it('accepts a title of 200 astral characters, which is 400 UTF-16 code units', async () => {
+    const user = userEvent.setup();
+    const onSubmit = succeedingSubmit();
+    renderCreateForm(onSubmit);
+
+    const title = screen.getByRole('textbox', { name: 'Title' });
+
+    await user.click(title);
+    await user.paste(ASTRAL_TITLE_AT_MAX);
+    await user.click(screen.getByRole('button', { name: CREATE_LABEL }));
+
+    // 200 characters is the bound, whatever each one costs in code units, so the request goes out
+    // carrying every one of them.
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit).toHaveBeenCalledWith({
+      title: ASTRAL_TITLE_AT_MAX,
+      description: '',
+      priority: 'medium',
+      dueDate: null,
+    });
+    expect(screen.queryByText('Title must be 200 characters or fewer')).not.toBeInTheDocument();
+  });
+
+  it('refuses a title of 201 astral characters with the server message and keeps what was pasted', async () => {
+    const user = userEvent.setup();
+    const onSubmit = succeedingSubmit();
+    renderCreateForm(onSubmit);
+
+    const title = screen.getByRole('textbox', { name: 'Title' });
+
+    await user.click(title);
+    await user.paste(ASTRAL_TITLE_OVER_MAX);
+    await user.click(screen.getByRole('button', { name: CREATE_LABEL }));
+
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    const message = await screen.findByText('Title must be 200 characters or fewer');
+
+    expect(title).toHaveAttribute('aria-invalid', 'true');
+    expect(title).toHaveAccessibleDescription('Title must be 200 characters or fewer');
+    expect(title.getAttribute('aria-describedby')).toBe(message.id);
+    expect(title).toHaveValue(ASTRAL_TITLE_OVER_MAX);
+  });
+
   it.each([
     { label: 'Title', text: 'a'.repeat(201), message: 'Title must be 200 characters or fewer' },
     {
@@ -329,6 +418,47 @@ describe('TaskForm — a save the server rejected', () => {
     // The rejection is announced, not focused: the user's place on the page is preserved.
     expect(message).not.toHaveFocus();
     expect(document.activeElement).not.toBe(message);
+  });
+
+  it('shows the summary above the fields when the map names a field this form has no control for', async () => {
+    const user = userEvent.setup();
+    const onSubmit = submitMock().mockRejectedValue(
+      makeApiError({
+        status: 400,
+        code: 'VALIDATION_ERROR',
+        message: 'Request validation failed',
+        fields: { completed: 'Completed cannot be set when creating a task' },
+      }),
+    );
+    renderCreateForm(onSubmit);
+
+    const title = screen.getByRole('textbox', { name: 'Title' });
+    const submit = screen.getByRole('button', { name: CREATE_LABEL });
+
+    await user.type(title, 'Buy milk');
+    await user.click(submit);
+
+    const message = await screen.findByRole('alert');
+
+    // The server named `completed`, which is no field of this form, so the rejection is reported above
+    // the fields rather than nowhere at all — and the summary is the server's own.
+    expect(message).toHaveTextContent('Request validation failed');
+    expect(message.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+
+    // No control is marked invalid, because none of them is the field the server named.
+    expect(title).not.toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByRole('textbox', { name: 'Description' })).not.toHaveAttribute(
+      'aria-invalid',
+      'true',
+    );
+    expect(screen.getByRole('combobox', { name: 'Priority' })).not.toHaveAttribute(
+      'aria-invalid',
+      'true',
+    );
+    expect(screen.getByLabelText('Due date')).not.toHaveAttribute('aria-invalid', 'true');
+
+    expect(title).toHaveValue('Buy milk');
+    expect(submit).toBeEnabled();
   });
 
   it.each([

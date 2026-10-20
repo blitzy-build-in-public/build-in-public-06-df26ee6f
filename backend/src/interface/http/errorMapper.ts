@@ -85,13 +85,18 @@ function isFastifyError(value: unknown): value is FastifyError {
 export function mapError(error: unknown): { statusCode: number; body: ApiErrorBody } {
   // A rule violation: the field map travels to the client, and the message is forwarded because it
   // carries the specific text of a failure that belongs to no field, such as an empty patch body.
+  // Status and code are read off the error, which carries both, so neither is restated here.
   if (error instanceof ValidationError) {
-    return { statusCode: 400, body: envelope('VALIDATION_ERROR', error.message, error.fields) };
+    return {
+      statusCode: error.statusCode,
+      body: envelope(error.code, error.message, error.fields),
+    };
   }
 
-  // A missing record: the domain's message already names the identifier, so it is not rebuilt here.
+  // A missing record: the domain's message already names the identifier, so it is not rebuilt here,
+  // and the status and the code come from the error for the same reason as above.
   if (error instanceof TaskNotFoundError) {
-    return { statusCode: 404, body: envelope('NOT_FOUND', error.message, {}) };
+    return { statusCode: error.statusCode, body: envelope(error.code, error.message, {}) };
   }
 
   if (isFastifyError(error)) {

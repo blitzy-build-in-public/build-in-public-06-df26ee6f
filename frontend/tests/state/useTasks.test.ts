@@ -666,6 +666,47 @@ describe('the filters', () => {
     // Nothing is filtered or reordered here: both tasks stay, in the order the server returned them.
     expect(result.current.tasks).toEqual([completed, open]);
   });
+
+  it('reads a repeated filter set as loading while its newest request is unanswered', async () => {
+    const first = makeTask({ id: TASK_ID });
+    const second = makeTask({ id: OTHER_TASK_ID });
+    const { result } = await renderReady([first]);
+
+    serverTasks = [second];
+    await performVoid(() => result.current.setFilters(ACTIVE_FILTERS));
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready');
+    });
+    expect(result.current.tasks).toEqual([second]);
+
+    // The intervening load is held, so the outcome the ACTIVE_FILTERS request produced is still the
+    // stored one when that set is chosen again below. The list on screen stays that request's own,
+    // and the newest load reads as loading because nothing has answered for it — the held answer
+    // belongs to the request the filters have just left, and the release below resolves the later one.
+    holdNextListAnswer();
+    await performVoid(() => result.current.setFilters(DEFAULT_FILTERS));
+    expect(result.current.status).toBe('loading');
+    expect(result.current.tasks).toEqual([second]);
+
+    // The third request repeats the second one's filter set, and that set's outcome is stored: an
+    // outcome describes the request it answered, never a later request for the same set, so asking
+    // for it again is a load with nothing answered for it yet.
+    const before = listCalls();
+    await performVoid(() => result.current.setFilters(ACTIVE_FILTERS));
+
+    await expectRefetchedSince(before);
+    expect(api.listTasks).toHaveBeenLastCalledWith(ACTIVE_FILTERS);
+    expect(result.current.status).toBe('loading');
+    expect(result.current.tasks).toEqual([second]);
+
+    // The stored list stays on screen until the newest request's answer lands, and then it wins.
+    const reloaded = [makeTask({ id: GONE_TASK_ID })];
+    await releaseListAnswer(reloaded);
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready');
+    });
+    expect(result.current.tasks).toEqual(reloaded);
+  });
 });
 
 describe('what the list shows', () => {

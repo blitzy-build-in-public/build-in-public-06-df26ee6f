@@ -8,9 +8,9 @@
  * inside its sub-second budget at a thousand tasks.
  *
  * Nothing here performs I/O, reads a clock, awaits a promise or holds state. The three message
- * strings the query parameters produce are owned here because this module is their only consumer;
- * the HTTP layer parses shape and asks for the semantics through {@link parseTaskQuery}, so no
- * rejection message is written twice.
+ * strings the query parameters produce are owned here because this module decides those rejections;
+ * the HTTP layer parses the request's shape and reads the wording from
+ * {@link QUERY_PARAMETER_MESSAGES}, so no rejection message is written twice.
  */
 
 import { VALIDATION_ERROR_MESSAGE, ValidationError } from '../domain/errors.js';
@@ -62,6 +62,23 @@ const PRIORITY_MESSAGE = 'priority must be one of: low, medium, high';
 
 /** Rejection message for an unsupported `sort` value. */
 const SORT_MESSAGE = 'sort must be one of: dueDate, priority, createdAt';
+
+/**
+ * The rejection message for each of the three query parameters, keyed by the parameter's own name.
+ *
+ * The contract's validation table fixes one message per parameter row and lists a repeated value
+ * among that row's rules, so a parameter supplied twice is rejected with the same documented text
+ * as one carrying an unsupported value. It is exported for the reason the three constants above stay
+ * private: the shape check in `interface/http/requestParsing.ts` must report a repetition with this
+ * wording, and reading it from the module that owns it is what keeps the text in one place — the
+ * same arrangement `MALFORMED_BODY_MESSAGE` has with `interface/http/errorMapper.ts`.
+ */
+export const QUERY_PARAMETER_MESSAGES: Readonly<Record<'status' | 'priority' | 'sort', string>> =
+  Object.freeze({
+    status: STATUS_MESSAGE,
+    priority: PRIORITY_MESSAGE,
+    sort: SORT_MESSAGE,
+  });
 
 /**
  * Sort weight of each priority level: `high` first, then `medium`, then `low`. A frozen rank map

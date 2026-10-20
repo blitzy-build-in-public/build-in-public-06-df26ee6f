@@ -72,6 +72,16 @@ const DESCRIPTION_TOO_LONG_MESSAGE = 'Description must be 2000 characters or few
  */
 const SAVE_FAILED_MESSAGE = 'Could not save the task. The server may be unreachable.';
 
+/**
+ * The field names this form renders, which is the whole of a rejection's field map it can display.
+ *
+ * A map may carry a name no control here owns — `completed` is the standing example, since the API
+ * refuses it on a create body — and that entry has nowhere of its own to be shown. It is reported as
+ * a form-level message rather than dropped, because a dropped key would leave the user with no
+ * message at all.
+ */
+const RENDERED_FIELD_NAMES: readonly string[] = ['title', 'description', 'priority', 'dueDate'];
+
 /** The form's own field values. `dueDate` is `''` when the task has no due date. */
 interface FormValues {
   title: string;
@@ -126,6 +136,19 @@ function buildPatch(task: Task, fields: ComparableTaskFields): UpdateTaskInput {
   }
 
   return patch;
+}
+
+/**
+ * Counts the characters of `value` the way the server counts them.
+ *
+ * The server's title and description bounds are measured in Unicode code points, so an astral
+ * character such as an emoji counts once; `String.prototype.length` counts UTF-16 code units instead,
+ * which would refuse a title the server accepts and would put this check's bound somewhere other than
+ * the server's. Spreading a string iterates by code point, so the two measurements agree and this
+ * stays the same rule the server applies rather than a second one.
+ */
+function countCharacters(value: string): number {
+  return [...value].length;
 }
 
 /** What a rejected save tells the form, once a rejection of unknown shape has been narrowed. */
@@ -282,8 +305,24 @@ export function TaskForm({ initialTask, onSubmit, onCancel, submitLabel }: TaskF
     const { message, fields, code } = readRejection(reason);
 
     if (Object.keys(fields).length > 0) {
-      setFieldErrors(fields);
-      setFormError(null);
+      const rendered: Record<string, string> = {};
+      let namedUnrenderedField = false;
+
+      // Only the names with a control of their own can be shown beside one; anything else is
+      // collected into the form-level message below instead of being dropped silently.
+      for (const [field, fieldMessage] of Object.entries(fields)) {
+        if (RENDERED_FIELD_NAMES.includes(field)) {
+          rendered[field] = fieldMessage;
+        } else {
+          namedUnrenderedField = true;
+        }
+      }
+
+      setFieldErrors(rendered);
+      // A key this form cannot render would otherwise be the user's only answer: the summary above
+      // the fields states the save was refused, and the server's own message says why where it
+      // carried one.
+      setFormError(namedUnrenderedField ? (message ?? SAVE_FAILED_MESSAGE) : null);
       return;
     }
 
@@ -317,13 +356,13 @@ export function TaskForm({ initialTask, onSubmit, onCancel, submitLabel }: TaskF
 
     const nextFieldErrors: Record<string, string> = {};
 
-    if (currentFields.title.length === 0) {
+    if (countCharacters(currentFields.title) === 0) {
       nextFieldErrors['title'] = TITLE_REQUIRED_MESSAGE;
-    } else if (currentFields.title.length > TITLE_MAX_LENGTH) {
+    } else if (countCharacters(currentFields.title) > TITLE_MAX_LENGTH) {
       nextFieldErrors['title'] = TITLE_TOO_LONG_MESSAGE;
     }
 
-    if (currentFields.description.length > DESCRIPTION_MAX_LENGTH) {
+    if (countCharacters(currentFields.description) > DESCRIPTION_MAX_LENGTH) {
       nextFieldErrors['description'] = DESCRIPTION_TOO_LONG_MESSAGE;
     }
 

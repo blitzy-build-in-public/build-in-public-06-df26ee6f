@@ -101,11 +101,22 @@ export default [
   },
   // Both workspaces configure Vitest with `globals: true`, so `describe`, `it`, `expect` and
   // `vi` are used without an import; `globals.vitest` is the package's own set for the
-  // runner, so it cannot fall behind what the suites actually use.
+  // runner, so it cannot fall behind what the suites actually use. The two trees run in
+  // different environments, so each is granted the set its own runner provides and not the
+  // other's: `backend/vitest.config.ts` fixes `environment: 'node'`, so an API suite has no
+  // document to reach for, while the frontend suite runs under jsdom — Node with a DOM added
+  // — so it sees the browser globals and the Node ones its modules still use, such as the
+  // `process.env` a suite stubs to pin a timezone.
   {
-    files: ['backend/tests/**/*.ts', 'frontend/tests/**/*.{ts,tsx}'],
+    files: ['backend/tests/**/*.ts'],
     languageOptions: {
-      globals: { ...globals.node, ...globals.browser, ...globals.vitest },
+      globals: { ...globals.node, ...globals.vitest },
+    },
+  },
+  {
+    files: ['frontend/tests/**/*.{ts,tsx}'],
+    languageOptions: {
+      globals: { ...globals.browser, ...globals.node, ...globals.vitest },
     },
   },
 

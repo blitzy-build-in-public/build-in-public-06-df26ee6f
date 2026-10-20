@@ -208,6 +208,12 @@ function isApiErrorCode(value: string): value is ApiErrorCode {
  *
  * Asserting the pairing — rather than only that the code is one of the three — is what lets the
  * envelope check catch a mapping that answered the wrong kind of failure under the right status.
+ *
+ * A client-error status other than 404 carries `VALIDATION_ERROR`: the mapping keeps the framework's
+ * own client-error status under the contract's one validation class, so such a status is asserted
+ * the same way a 400 is, and never with a class of its own. A status the contract gives no class to
+ * at all — any 5xx other than 500 — is a failure of this suite's expectation rather than a code to
+ * guess at.
  */
 function expectedCodeFor(statusCode: number): ApiErrorCode {
   switch (statusCode) {
@@ -218,6 +224,9 @@ function expectedCodeFor(statusCode: number): ApiErrorCode {
     case 500:
       return 'INTERNAL_ERROR';
     default:
+      if (statusCode >= 400 && statusCode < 500) {
+        return 'VALIDATION_ERROR';
+      }
       throw new Error(`The contract defines no failure class for status ${statusCode}`);
   }
 }
@@ -1203,25 +1212,35 @@ describe('task routes (composed application): query parameters', () => {
   });
 
   /**
-   * One unsupported query value per parameter, with the message the contract fixes for it.
+   * One query parameter per row, with the message the contract fixes for that parameter.
    *
-   * The three strings are asserted literally because the module that owns them — the application's
-   * query module — does not export them as constants; they are the contract's own text, and the
-   * alternative would be a second definition of the same wording in a test.
+   * The strings are the contract's own text, so they are asserted literally: the module that owns
+   * them fixes one message per parameter row, and reading that constant here would let the wording
+   * drift from the contract without failing.
    */
-  it.each([
+  interface QueryParameterCase {
+    readonly parameter: string;
+    readonly message: string;
+  }
+
+  const QUERY_PARAMETER_CASES: readonly QueryParameterCase[] = [
     { parameter: 'status', message: 'status must be one of: all, open, completed' },
     { parameter: 'priority', message: 'priority must be one of: low, medium, high' },
     { parameter: 'sort', message: 'sort must be one of: dueDate, priority, createdAt' },
-  ])('rejects an unsupported $parameter value', async (testCase: { parameter: string; message: string }) => {
-    await seedFixture();
-    const url = `/api/tasks?${testCase.parameter}=unsupported`;
+  ];
 
-    const { body } = await rejectedRequest(api(), () => request(api(), 'GET', url));
+  it.each(QUERY_PARAMETER_CASES)(
+    'rejects an unsupported $parameter value',
+    async (testCase: QueryParameterCase) => {
+      await seedFixture();
+      const url = `/api/tasks?${testCase.parameter}=unsupported`;
 
-    expect(body.error.message).toBe(VALIDATION_ERROR_MESSAGE);
-    expect(body.error.fields).toEqual({ [testCase.parameter]: testCase.message });
-  });
+      const { body } = await rejectedRequest(api(), () => request(api(), 'GET', url));
+
+      expect(body.error.message).toBe(VALIDATION_ERROR_MESSAGE);
+      expect(body.error.fields).toEqual({ [testCase.parameter]: testCase.message });
+    },
+  );
 
   it('reports every unsupported query value in one response', async () => {
     await seedFixture();
@@ -1234,17 +1253,21 @@ describe('task routes (composed application): query parameters', () => {
     expect(Object.keys(body.error.fields).sort()).toEqual(['sort', 'status']);
   });
 
-  it.each(['status', 'priority', 'sort'])('rejects a repeated %s parameter', async (parameter: string) => {
-    await seedFixture();
-    const url = `/api/tasks?${parameter}=open&${parameter}=completed`;
+  it.each(QUERY_PARAMETER_CASES)(
+    'rejects a repeated $parameter parameter',
+    async (testCase: QueryParameterCase) => {
+      await seedFixture();
+      const url = `/api/tasks?${testCase.parameter}=open&${testCase.parameter}=completed`;
 
-    const { body } = await rejectedRequest(api(), () => request(api(), 'GET', url));
+      const { body } = await rejectedRequest(api(), () => request(api(), 'GET', url));
 
-    // A parameter supplied twice is a failure of the request's shape, so the parameter's own name is
-    // the field key and the message is about the repetition rather than about an unsupported value.
-    expect(Object.keys(body.error.fields)).toEqual([parameter]);
-    expect(fieldMessage(body, parameter)).toContain(parameter);
-  });
+      // A parameter supplied twice carries the parameter's own field key and the message the
+      // contract fixes for that parameter: the repetition is one of that row's rules, so it is not
+      // reported with a wording of its own.
+      expect(Object.keys(body.error.fields)).toEqual([testCase.parameter]);
+      expect(fieldMessage(body, testCase.parameter)).toBe(testCase.message);
+    },
+  );
 });
 
 
@@ -1326,6 +1349,31 @@ describe('task routes (composed application): rejected input', () => {
       );
 
       expect(body.error.message).toBe(FIELD_MESSAGES.emptyPatch);
+      expect(body.error.fields).toEqual({});
+    });
+
+    it('answers an unsupported media type with the framework status, through the contract envelope', async () => {
+      // A body declared under a media type the server registers no parser for never reaches the
+      // handler: the framework answers it with its own client-error status first. What the client
+      // receives is still the one mapping — that status under the contract's validation class, with
+      // the contract's envelope and its summary, never the framework's own body or wording, which the
+      // envelope check excludes by requiring `error` to be the body's only key and to carry only
+      // `code`, `message` and `fields`. `rejectedRequest` additionally asserts the status and that
+      // nothing was created.
+      const { body } = await rejectedRequest(
+        api(),
+        () =>
+          api().inject({
+            method: 'POST',
+            url: '/api/tasks',
+            headers: { 'content-type': 'application/xml' },
+            payload: '<task><title>Buy milk</title></task>',
+          }),
+        415,
+      );
+
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+      expect(body.error.message).toBe(VALIDATION_ERROR_MESSAGE);
       expect(body.error.fields).toEqual({});
     });
   });
@@ -1553,6 +1601,35 @@ describe('task routes (composed application): an identifier that matches no task
     expect(body.error.code).toBe('NOT_FOUND');
     expect(body.error.message).toContain('not-a-uuid');
   });
+
+  /**
+   * The requests whose path ends at the slash, which the router matches with an empty `:id`.
+   *
+   * The router descends into the parametric child even when nothing follows the slash, so each of
+   * these reaches its handler with `params.id === ''` — which is why the empty identifier is
+   * accepted as supplied and answered from the task it names, of which there is none.
+   */
+  const TRAILING_SLASH_CASES: readonly UnknownIdentifierCase[] = [
+    { label: 'a read', method: 'GET' },
+    { label: 'an update', method: 'PATCH', payload: { title: 'Buy oat milk' } },
+    { label: 'a delete', method: 'DELETE' },
+  ];
+
+  it.each(TRAILING_SLASH_CASES)(
+    'answers $label of the empty identifier a trailing-slash path produces with 404 rather than 400',
+    async (testCase: UnknownIdentifierCase) => {
+      // The identifier is not missing from the path, it is empty: rejecting it as a missing
+      // parameter is what would answer this real request with a 400.
+      const { body } = await rejectedRequest(
+        api(),
+        () => request(api(), testCase.method, '/api/tasks/', testCase.payload),
+        404,
+      );
+
+      expect(body.error.code).toBe('NOT_FOUND');
+      expect(body.error.fields).toEqual({});
+    },
+  );
 
   /**
    * Identifiers longer than the router's own default parameter limit of 100 characters.

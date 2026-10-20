@@ -104,6 +104,22 @@ function hasKey(record: Readonly<Record<string, unknown>>, key: string): boolean
 }
 
 /**
+ * The length of a string in the characters a reader counts.
+ *
+ * The bound this measures against is stated in characters — "200 characters or fewer" — while
+ * `String.prototype.length` counts UTF-16 code units, so a character outside the basic plane, which
+ * a surrogate pair stores in two units, would be counted twice: a title of 100 emoji would measure
+ * 200 code units and be refused by a bound of 200 that its own message calls characters. Spreading
+ * the string iterates it by code point, so each character counts once.
+ *
+ * @param value The already-trimmed value whose bound is being applied.
+ * @returns The number of Unicode code points in `value`.
+ */
+function characterCount(value: string): number {
+  return [...value].length;
+}
+
+/**
  * The message for the `title` field, or `null` when the supplied title is acceptable.
  *
  * An absent title is an error only where the mode requires one; a supplied title must be a
@@ -125,7 +141,7 @@ function titleMessage(input: Readonly<Record<string, unknown>>, required: boolea
   if (trimmed.length === 0) {
     return FIELD_MESSAGES.titleRequired;
   }
-  return trimmed.length > TITLE_MAX_LENGTH ? FIELD_MESSAGES.titleTooLong : null;
+  return characterCount(trimmed) > TITLE_MAX_LENGTH ? FIELD_MESSAGES.titleTooLong : null;
 }
 
 /**
@@ -142,7 +158,7 @@ function descriptionMessage(input: Readonly<Record<string, unknown>>): string | 
   if (typeof value !== 'string') {
     return FIELD_MESSAGES.descriptionNotString;
   }
-  return normalizeDescription(value).length > DESCRIPTION_MAX_LENGTH
+  return characterCount(normalizeDescription(value)) > DESCRIPTION_MAX_LENGTH
     ? FIELD_MESSAGES.descriptionTooLong
     : null;
 }
@@ -169,6 +185,31 @@ function dueDateMessage(input: Readonly<Record<string, unknown>>): string | null
 }
 
 /**
+ * Records one message in an error map under the field name the client sent.
+ *
+ * The name is the client's, not a literal, and one of the names a body can carry is `__proto__`:
+ * that name is an own key of a parsed body — it is how the text `{"__proto__":…}` parses — so the
+ * loop below reaches this helper holding it. A plain `errors[key] = message` would store nothing
+ * for it, because that name is an accessor inherited from `Object.prototype`: the assignment runs
+ * the accessor, no own property appears, `Object.keys(errors)` stays empty and the caller reads a
+ * body it should have rejected as valid. Defining the property writes it whatever the name is,
+ * leaves the map an ordinary object whose own enumerable keys are what a consumer lists and
+ * serialises, and leaves no name able to replace its prototype.
+ *
+ * @param errors The map being built, one message per offending field name.
+ * @param key The property name, exactly as the client sent it.
+ * @param message The one message that name earns.
+ */
+function setFieldMessage(errors: FieldErrors, key: string, message: string): void {
+  Object.defineProperty(errors, key, {
+    value: message,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
+
+/**
  * Applies every field rule to `input` and returns one message per offending field, so that a
  * form can place each message beside its control. The first failing rule for a field wins and
  * independent fields all report.
@@ -184,12 +225,13 @@ function validateFields(
 
   // Unknown and system-owned properties first: a mistyped property is reported against the name
   // the client sent rather than silently dropped, and `id`, `createdAt` and `updatedAt` are named
-  // as read-only wherever they appear.
+  // as read-only wherever they appear. Both writes go through `setFieldMessage`, because the key
+  // is the client's own and a body may name a property `__proto__`.
   for (const key of Object.keys(input)) {
     if (!KNOWN_FIELD_NAMES.includes(key)) {
-      errors[key] = FIELD_MESSAGES.unknownField;
+      setFieldMessage(errors, key, FIELD_MESSAGES.unknownField);
     } else if (isReadOnlyField(key)) {
-      errors[key] = FIELD_MESSAGES.readOnly[key];
+      setFieldMessage(errors, key, FIELD_MESSAGES.readOnly[key]);
     }
   }
 
