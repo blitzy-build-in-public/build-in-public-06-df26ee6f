@@ -23,7 +23,7 @@ import type { Clock } from './Clock.js';
 import type { TaskRepository } from './TaskRepository.js';
 
 /** The ports an update is performed through; both are supplied by the composition root. */
-export interface UpdateTaskDependencies {
+interface UpdateTaskDependencies {
   /** Where the task is read from and written back to. */
   readonly repository: TaskRepository;
   /** The single source of the instant that becomes the task's new `updatedAt`. */
@@ -37,7 +37,7 @@ export interface UpdateTaskDependencies {
  * owns the kind checks and their messages, so narrowing the type here would force a second copy of
  * those rules into this layer.
  */
-export interface UpdateTaskInput {
+interface UpdateTaskInput {
   /** Identifier of the task to update. */
   readonly id: string;
   /** The fields to change; only the keys present are applied. */

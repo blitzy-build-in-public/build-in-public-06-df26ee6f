@@ -76,7 +76,7 @@ export function normalizeDescription(value: unknown): string {
  * total so that `createTask` always yields a complete task; rejecting an unsupported
  * priority is a rule of `validation.ts` and is reported from there.
  */
-export function normalizePriority(value: unknown): TaskPriority {
+function normalizePriority(value: unknown): TaskPriority {
   const matched = TASK_PRIORITIES.find((priority) => priority === value);
   return matched ?? DEFAULT_PRIORITY;
 }

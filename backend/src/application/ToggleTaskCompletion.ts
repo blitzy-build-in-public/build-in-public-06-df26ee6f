@@ -25,7 +25,7 @@ import type { TaskRepository } from './TaskRepository.js';
 import type { Clock } from './Clock.js';
 
 /** A completion change: which task, and the state its `completed` flag should take. */
-export interface ToggleTaskCompletionInput {
+interface ToggleTaskCompletionInput {
   /** Identifier of the task to complete or reopen. */
   id: string;
   /** `true` completes the task, `false` reopens it. */
@@ -33,7 +33,7 @@ export interface ToggleTaskCompletionInput {
 }
 
 /** The ports a {@link ToggleTaskCompletion} is constructed with. */
-export interface ToggleTaskCompletionDependencies {
+interface ToggleTaskCompletionDependencies {
   /** Where the task is read from and written back to. */
   repository: TaskRepository;
   /** Source of the instant the update is applied at. */

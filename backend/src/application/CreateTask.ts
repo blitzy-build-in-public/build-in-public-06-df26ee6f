@@ -28,7 +28,7 @@ import type { TaskRepository } from './TaskRepository.js';
  * clock by the composition root, an in-memory store and a frozen clock by the tests — so the names
  * `repository` and `clock` are the shape every caller constructs this class with.
  */
-export interface CreateTaskDependencies {
+interface CreateTaskDependencies {
   /** Where the created task is stored. */
   readonly repository: TaskRepository;
   /** The only source of the instant written to `createdAt` and `updatedAt`. */

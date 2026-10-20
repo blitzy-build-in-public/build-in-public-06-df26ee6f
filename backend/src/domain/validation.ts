@@ -55,7 +55,7 @@ export const FIELD_MESSAGES = Object.freeze({
 });
 
 /** A field the system owns, which a request body may therefore never carry. */
-export type ReadOnlyField = keyof typeof FIELD_MESSAGES.readOnly;
+type ReadOnlyField = keyof typeof FIELD_MESSAGES.readOnly;
 
 /**
  * Narrows a property name to a system-owned field, so the read-only message can be looked up by
