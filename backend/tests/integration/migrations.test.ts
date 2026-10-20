@@ -17,6 +17,11 @@
  * durability requirement ("it is still present after reloading the page and restarting the
  * backend"), and the evidence for the documented entity-to-table mapping.
  *
+ * Also asserted here: the resource lifecycle of the composition root. `composeApp` opens the SQLite
+ * handle and must release it when the HTTP application cannot be built and when the application's
+ * own close rejects — the same release the opener's refused-open case below proves, over a file
+ * reserved the same way, so the cases sit in the suite that already owns that release.
+ *
  * The file is created by the run's implementation plan (its tree lists this path and its file map
  * gives it the purpose "fresh, current, version-ahead and restart-survival cases"), so the DDL, the
  * pragmas and the version guard it exercises are the ones that ship — nothing here is a copy of
@@ -43,6 +48,7 @@ import type { Task } from '../../src/domain/task.js';
 import { openDatabase } from '../../src/infrastructure/database.js';
 import { LATEST_SCHEMA_VERSION, applyMigrations } from '../../src/infrastructure/migrations.js';
 import { SqliteTaskRepository } from '../../src/infrastructure/SqliteTaskRepository.js';
+import { composeApp, type AppConfig } from '../../src/main.js';
 import { createTempDatabase, type TempDatabase } from '../support/tempDatabase.js';
 
 /**
@@ -407,7 +413,7 @@ async function readStoredTask(db: DatabaseHandle, id: string): Promise<Task> {
  * `/proc/self/fd` is the only way a test can see a leaked SQLite connection: the driver reports no
  * count of the handles it holds, but the file and the `-wal` and `-shm` sidecars a WAL connection
  * keeps open are each an open descriptor under the directory the file lives in. An entry that
- * vanishes between listing the directory and reading it resolves to nothing and is skipped. The one
+ * vanishes between listing the directory and reading it resolves to nothing and is skipped. Each
  * case that uses this probe skips itself where `/proc/self/fd` is absent, so a platform without it
  * reports no failure.
  */
@@ -713,6 +719,112 @@ describe('a database file newer than this build', () => {
       // and its `-shm` are all closed, so nothing is left for the rest of the process to hold.
       expect(() => openDatabase(temp.path)).toThrow(/999/);
       expect(openTargetsUnder(temp.directory)).toStrictEqual([]);
+    },
+  );
+});
+
+/**
+ * A level the application logger cannot be built with, so `buildApp` throws.
+ *
+ * Pino rejects an unknown level while the Fastify instance is constructed, before any route is
+ * registered, which is what makes it the injection that fails the composition after the database
+ * handle is already open.
+ */
+const UNBUILDABLE_LOG_LEVEL = 'not-a-level';
+
+/**
+ * The message the deliberately throwing `onClose` hook carries.
+ *
+ * One no other part of the system can produce, so a rejection whose message is this one is
+ * unmistakably the failed server close, and a rejection that lost it is visibly not that failure.
+ */
+const CLOSE_FAILURE_MESSAGE = 'the application close failed — must reach the caller, not be swallowed';
+
+/**
+ * Reserves a temporary directory for the opener to create its database file in.
+ *
+ * The directory is tracked before anything is opened inside it, so a directory whose open throws is
+ * still removed by the teardown. The file itself is deliberately not created here: `openDatabase`
+ * creates it, which is what lets one case use its existence as proof that the composition reached
+ * the opener before it failed.
+ */
+function reserveTempDatabase(prefix: string): TempDatabase {
+  const temp = createTempDatabase(prefix);
+  trackedTemps.push(temp);
+
+  return temp;
+}
+
+/**
+ * The configuration the cases compose with.
+ *
+ * `port` is inert because `composeApp` does not listen, so no socket is bound and this suite can run
+ * beside every other suite on the host; the database path is the file the case just reserved.
+ */
+function composedConfig(databasePath: string, logLevel: string): AppConfig {
+  return { port: 0, databasePath, logLevel };
+}
+
+describe('the resource lifecycle of the composition root', () => {
+  it.skipIf(!existsSync('/proc/self/fd'))(
+    'releases the database handle when building the HTTP application fails',
+    async () => {
+      const temp = reserveTempDatabase('todo-compose-failure-');
+
+      // The composition fails on the unbuildable logger level, inside `buildApp` and therefore after
+      // the handle was opened. The rejection is the framework's own, unchanged: releasing the handle
+      // must not replace it.
+      await expect(
+        composeApp(composedConfig(temp.path, UNBUILDABLE_LOG_LEVEL)),
+      ).rejects.toThrow(UNBUILDABLE_LOG_LEVEL);
+
+      // The control this case can have: the opener ran and created the file, so a zero count below
+      // says the handle on it was released rather than that the composition failed before opening.
+      expect(existsSync(temp.path)).toBe(true);
+      expect(openTargetsUnder(temp.directory)).toStrictEqual([]);
+    },
+  );
+
+  it.skipIf(!existsSync('/proc/self/fd'))(
+    'releases the database handle when the application close rejects, and still rejects',
+    async () => {
+      const temp = reserveTempDatabase('todo-compose-close-');
+      const composed = await composeApp(composedConfig(temp.path, 'silent'));
+      await composed.app.ready();
+
+      // The control: the file, its `-wal` and its `-shm` are all visible while the application is
+      // live, so the empty result asserted after the close means the three were released.
+      expect(openTargetsUnder(temp.directory).length).toBeGreaterThan(0);
+
+      // A server whose close fails is what the finding describes. The hook is registered after the
+      // application is ready because that is when a real server would carry its own close steps.
+      composed.app.addHook('onClose', async () => {
+        throw new Error(CLOSE_FAILURE_MESSAGE);
+      });
+
+      // The failure reaches the caller — nothing here swallows it — and yet the handle is gone.
+      await expect(composed.close()).rejects.toThrow(CLOSE_FAILURE_MESSAGE);
+      expect(openTargetsUnder(temp.directory)).toStrictEqual([]);
+    },
+  );
+
+  it.skipIf(!existsSync('/proc/self/fd'))(
+    'releases both resources on the ordinary path, so a successful close is unchanged',
+    async () => {
+      const temp = reserveTempDatabase('todo-compose-release-');
+      const composed = await composeApp(composedConfig(temp.path, 'silent'));
+      await composed.app.ready();
+
+      expect(openTargetsUnder(temp.directory).length).toBeGreaterThan(0);
+
+      // The ordinary release resolves, and it releases just as completely as the failing one above:
+      // the guard on the close must not have turned a clean shutdown into a partial one.
+      await expect(composed.close()).resolves.toBeUndefined();
+      expect(openTargetsUnder(temp.directory)).toStrictEqual([]);
+
+      // The file itself is still there — only the descriptors are gone — so the zero above cannot be
+      // an artifact of the directory having been removed underneath the probe.
+      expect(existsSync(temp.path)).toBe(true);
     },
   );
 });

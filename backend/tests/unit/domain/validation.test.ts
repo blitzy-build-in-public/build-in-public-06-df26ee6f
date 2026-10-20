@@ -501,9 +501,13 @@ describe('validatePatch', () => {
   });
 
   describe('the title rule', () => {
-    const missingTitles: TaskPatch[] = [{ title: '' }, { title: '   ' }, { title: '\t\n' }];
+    const missingTitles: { name: string; patch: TaskPatch }[] = [
+      { name: 'an empty title', patch: { title: '' } },
+      { name: 'a whitespace-only title', patch: { title: '   ' } },
+      { name: 'a title of only a tab and a newline', patch: { title: '\t\n' } },
+    ];
 
-    it.each(missingTitles)('requires a title that is present but empty', (patch) => {
+    it.each(missingTitles)('requires a title that is present but empty: $name', ({ patch }) => {
       expectPatchErrors(patch, { title: 'Title is required' });
     });
 

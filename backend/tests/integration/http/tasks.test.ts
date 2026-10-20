@@ -1686,7 +1686,7 @@ describe('task routes (composed application): an identifier that matches no task
   ];
 
   it.each(UNMATCHED_ROUTE_CASES)(
-    'answers $label with 404 naming the method and the path, never with 405',
+    'answers $label ($method $url) with 404 naming the method and the path, never with 405',
     async (testCase: UnmatchedRouteCase) => {
       const { body } = await rejectedRequest(
         api(),
