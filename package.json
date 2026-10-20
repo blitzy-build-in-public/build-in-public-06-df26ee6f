@@ -1,0 +1,35 @@
+{
+  "name": "todo-app",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "engines": {
+    "node": ">=20.19.0",
+    "npm": ">=10"
+  },
+  "scripts": {
+    "dev": "concurrently --names api,web --prefix-colors blue,magenta \"npm run dev --workspace @todo/backend\" \"npm run dev --workspace @todo/frontend\"",
+    "build": "npm run build --workspace @todo/backend && npm run build --workspace @todo/frontend",
+    "start": "npm start --workspace @todo/backend",
+    "preview": "npm run preview --workspace @todo/frontend",
+    "test": "npm test --workspace @todo/backend && npm test --workspace @todo/frontend",
+    "test:coverage": "npm run test:coverage --workspace @todo/backend && npm run test:coverage --workspace @todo/frontend",
+    "test:e2e": "playwright test",
+    "lint": "eslint .",
+    "typecheck": "npm run typecheck --workspace @todo/backend && npm run typecheck --workspace @todo/frontend"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@playwright/test": "1.64.1",
+    "concurrently": "9.2.5",
+    "dependency-cruiser": "17.4.3",
+    "eslint": "10.13.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.13.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.0"
+  }
+}
