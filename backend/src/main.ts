@@ -32,18 +32,50 @@ import { SqliteTaskRepository } from './infrastructure/SqliteTaskRepository.js';
 import { systemClock } from './infrastructure/systemClock.js';
 import { buildApp } from './interface/http/buildApp.js';
 
-/** Port the API binds when `PORT` is absent or cannot be parsed. */
+/** Port the API binds when `PORT` is absent or holds nothing usable as a port. */
 const DEFAULT_PORT = 3000;
 
 /**
- * SQLite file opened when `DATABASE_PATH` is absent, resolved against the process working
- * directory. npm runs a workspace script with the workspace directory as its working directory, so
- * through the root scripts this lands on `backend/data/todo.db`.
+ * SQLite file opened when `DATABASE_PATH` is absent, empty or whitespace only, resolved against the
+ * process working directory. npm runs a workspace script with the workspace directory as its
+ * working directory, so through the root scripts this lands on `backend/data/todo.db`.
  */
 const DEFAULT_DATABASE_PATH = './data/todo.db';
 
-/** Pino level for the application logger when `LOG_LEVEL` is absent. */
+/** Pino level for the application logger when `LOG_LEVEL` is absent, empty or whitespace only. */
 const DEFAULT_LOG_LEVEL = 'info';
+
+/**
+ * Reads a string-valued setting, taking `fallback` when the variable is absent or blank.
+ *
+ * A variable that is exported but holds nothing is treated exactly like an unset one: `??` guards
+ * only the unset case, and an empty value is not usable by either consumer. An empty
+ * `DATABASE_PATH` would hand SQLite an empty filename, which it opens as a private temporary
+ * database, and an empty `LOG_LEVEL` would hand pino a level it rejects and abort startup — each
+ * failing later rather than at the point the variable was read. Any value with other content is
+ * returned verbatim, so a legitimate path or level is never rewritten.
+ *
+ * @param value The variable's value, or `undefined` when it is unset.
+ * @param fallback The documented default for that variable.
+ */
+function readConfigValue(value: string | undefined, fallback: string): string {
+  return value === undefined || value.trim() === '' ? fallback : value;
+}
+
+/**
+ * Reads the port the API binds, taking `DEFAULT_PORT` when the variable is absent or unusable.
+ *
+ * This is the guard `playwright.config.ts` applies to the same variable, so every site that reads
+ * `PORT` — this process and the end-to-end configuration — agrees on which port the API is on. An
+ * absent, empty, non-numeric, zero or out-of-range value falls back; anything else is used as
+ * parsed, which is also why `PORT=0` cannot put the API on an ephemeral port.
+ *
+ * @param value The variable's value, or `undefined` when it is unset.
+ */
+function resolvePort(value: string | undefined): number {
+  const parsed = Number.parseInt(value ?? '', 10);
+  return Number.isInteger(parsed) && parsed > 0 && parsed < 65_536 ? parsed : DEFAULT_PORT;
+}
 
 /**
  * The configuration the API process runs from, read once at startup.
@@ -161,17 +193,13 @@ export async function composeApp(
  * calls `process.exit`.
  */
 export async function main(): Promise<void> {
-  const rawPort = process.env.PORT;
-  // A missing or unparsable PORT must never reach the listen call as a non-number, so the default is
-  // applied to the parse result rather than to the variable: an absent value, an empty one and a
-  // non-numeric one all fall back, and a valid value can never be displaced by the default.
-  const parsedPort = Number.parseInt(rawPort ?? '', 10);
-  const port = Number.isNaN(parsedPort) ? DEFAULT_PORT : parsedPort;
-
+  // Every variable is read through a reader that treats a present-but-blank value as absent, so
+  // `PORT=`, `DATABASE_PATH=` and `LOG_LEVEL=` each take their documented default instead of
+  // reaching the listen call, the SQLite driver or pino as an empty value.
   const config: AppConfig = {
-    port,
-    databasePath: process.env.DATABASE_PATH ?? DEFAULT_DATABASE_PATH,
-    logLevel: process.env.LOG_LEVEL ?? DEFAULT_LOG_LEVEL,
+    port: resolvePort(process.env.PORT),
+    databasePath: readConfigValue(process.env.DATABASE_PATH, DEFAULT_DATABASE_PATH),
+    logLevel: readConfigValue(process.env.LOG_LEVEL, DEFAULT_LOG_LEVEL),
   };
 
   const { app } = await composeApp(config);

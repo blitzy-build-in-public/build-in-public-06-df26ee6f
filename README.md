@@ -149,15 +149,23 @@ npm ci && npx playwright install --with-deps chromium && npm run typecheck && np
 ## Configuration
 
 The API process reads three variables at startup. Each has a default, so the application runs with
-no environment set at all. `.env.example` documents the three with the same defaults; it is a
-reference only and is not loaded, because the process reads the real environment and no `.env` file
-exists.
+no environment set at all. `.env.example` documents those three with the same defaults, plus the one
+more variable in the table below that the API process does not read; it is a reference only and is
+not loaded, because the process reads the real environment and no `.env` file exists.
 
 | Variable | Default | Effect | How it is overridden |
 |----------|---------|--------|----------------------|
 | `PORT` | `3000` | the port the API binds, and the target the frontend's `/api` proxy forwards to | exported in the shell before `npm run dev` or `npm start`, or set in the Playwright `webServer` entry |
 | `DATABASE_PATH` | `./data/todo.db` | the SQLite file to open, resolved against the process working directory, with the parent directory created when it is missing | exported in the shell, or passed as `config.databasePath` to `composeApp` by the tests |
 | `LOG_LEVEL` | `info` | the pino level for the application logger, and therefore for the cause logged with a 500 response | exported in the shell; the test suites pass `silent` so their output stays readable |
+| `VITE_DEV_PORT` | `5173` | the port the Vite development server that `npm run test:e2e` starts listens on, and therefore the run's `baseURL` | exported in the shell before `npm run test:e2e` |
+
+The first three rows are the API process's own. `VITE_DEV_PORT` is read by `playwright.config.ts`
+alone and never by the API process: it is the port the Vite development server that `npm run
+test:e2e` starts listens on, and therefore the run's `baseURL`. Move it by exporting it in the shell
+before that command. That is the end-to-end run's remedy for a 5173 that is busy — the same problem
+`npm run dev` solves with `--port` on its frontend workspace script, described under Run in
+development.
 
 Because npm runs a workspace script with the workspace directory as its working directory,
 `DATABASE_PATH` resolves to `backend/data/todo.db` when the application is started through the root
@@ -192,7 +200,8 @@ The next start recreates the directory, the file and the current schema.
 ├── .dependency-cruiser.cjs      # the seven layer rules the architecture test runs
 ├── playwright.config.ts         # the two servers the end-to-end suite starts
 ├── .gitignore                   # generated and local state kept out of the repository
-├── .env.example                 # the three configuration variables and their defaults
+├── .env.example                 # the configuration variables and their defaults
+├── README.md                    # prerequisites, install, run, build, test, configuration, layout, API summary
 ├── backend/
 │   ├── package.json             # @todo/backend
 │   ├── tsconfig.json            # NodeNext resolution, emits dist

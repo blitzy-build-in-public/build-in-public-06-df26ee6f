@@ -8,6 +8,28 @@
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 
+/** The port the API listens on when `PORT` is absent or holds nothing usable as a port. */
+const DEFAULT_API_PORT = 3000;
+
+/**
+ * Reads the API's port, taking `DEFAULT_API_PORT` when the variable is absent or unusable.
+ *
+ * This is the one rule `backend/src/main.ts` and `playwright.config.ts` apply to the
+ * same variable: an absent, empty, non-numeric, zero or out-of-range value falls back,
+ * so the proxy target and the port the API actually binds cannot disagree. The rule is
+ * repeated here rather than imported, because neither workspace may import the other's
+ * sources.
+ *
+ * @param value The variable's value, or `undefined` when it is unset.
+ */
+function resolveApiPort(value: string | undefined): number {
+  const parsed = Number.parseInt(value ?? '', 10);
+  return Number.isInteger(parsed) && parsed > 0 && parsed < 65_536 ? parsed : DEFAULT_API_PORT;
+}
+
+/** The port this server forwards `/api` requests to. */
+const API_PORT = resolveApiPort(process.env.PORT);
+
 export default defineConfig({
   // The JSX transform and React fast refresh for the `.tsx` sources.
   plugins: [react()],
@@ -20,12 +42,16 @@ export default defineConfig({
     // The browser reaches the API only through this proxy — the client uses the
     // relative base `/api`, so no absolute host appears anywhere in `frontend/src`
     // and no cross-origin configuration exists. The target follows `PORT`, the same
-    // variable the API process binds, and falls back to the documented default of
-    // 3000. `vite preview` inherits `server.proxy`, so this single entry also serves
-    // the built bundle and the end-to-end run; no `preview.proxy` block is needed.
+    // variable the API process binds, through the same integer-and-range guard that
+    // process uses, so a `PORT` that is absent, empty, non-numeric, zero or out of
+    // range falls back to the documented default of 3000 on both sides instead of
+    // reaching this URL unparsed: an empty value would render as `http://localhost:`
+    // and silently mean port 80, and a non-numeric one is not a URL at all.
+    // `vite preview` inherits `server.proxy`, so this single entry also serves the
+    // built bundle and the end-to-end run; no `preview.proxy` block is needed.
     proxy: {
       '/api': {
-        target: `http://localhost:${process.env.PORT ?? '3000'}`,
+        target: `http://localhost:${API_PORT}`,
         changeOrigin: true,
       },
     },
