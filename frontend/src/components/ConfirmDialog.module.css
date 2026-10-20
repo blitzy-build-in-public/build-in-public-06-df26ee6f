@@ -1,0 +1,125 @@
+/*
+ * frontend/src/components/ConfirmDialog.module.css
+ *
+ * Scoped styles for the delete confirmation: the native modal <dialog> box, the
+ * ::backdrop that dims the page behind it, the heading and message, and the row
+ * holding the Cancel and confirm controls.
+ *
+ * Class map — the whole of this module's contract with ConfirmDialog.tsx:
+ *
+ *   .dialog    the <dialog> box itself, and the ::backdrop of its modal state
+ *   .title     the <h2> naming the task about to be deleted
+ *   .message   the <p> carrying the confirmation copy
+ *   .actions   the row holding the two controls
+ *
+ * The component renders its two controls as plain <button> elements carrying no class
+ * of their own, so they are reached here through the dialog's element selector rather
+ * than through names this module would have to invent for them.
+ *
+ * Every colour, space, radius and type size comes from the custom properties published
+ * by frontend/src/styles/global.css. The translucent backdrop below is the one literal
+ * in the file, because a viewport overlay is not part of that token set. No box-shadow
+ * appears anywhere: the stylesheet publishes no shadow token, and the border with the
+ * backdrop are what separate the dialog from the page.
+ *
+ * Nothing here removes or hides the focus indicator, no declaration is marked
+ * !important, and the only transition sits behind a prefers-reduced-motion guard —
+ * global.css also disables transitions outright for a user who asks for reduced motion.
+ */
+
+.dialog {
+  /* The dialog is opened with showModal(), so the browser places it in the top layer
+     and positions it against the viewport rather than inside the .app content column;
+     it therefore subtracts the page gutter itself to line its edges up with the page's
+     content. Centring is deliberately not declared here: global.css restores
+     `dialog { margin: auto }` after its own universal margin reset. */
+  inline-size: calc(100% - (2 * var(--page-padding-inline)));
+  max-inline-size: var(--content-max-width);
+  /* A 200-character task title must not push the two controls past the viewport edge,
+     where they could no longer be reached. */
+  max-block-size: calc(100% - (2 * var(--page-padding-inline)));
+  overflow-y: auto;
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-base);
+  /* Body sets this too, but an unbroken title is exactly what would otherwise widen the
+     dialog past a 320px viewport. */
+  overflow-wrap: anywhere;
+}
+
+.dialog::backdrop {
+  background-color: rgb(0 0 0 / 0.45);
+}
+
+.title {
+  margin-block-end: var(--space-2);
+  font-size: var(--font-size-lg);
+  line-height: var(--line-height-tight);
+  font-weight: var(--font-weight-bold);
+}
+
+.message {
+  margin-block-end: var(--space-5);
+  color: var(--color-text-muted);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}
+
+/* The two controls, given the same treatment as every other secondary button in the
+   interface (TaskForm.module.css and TaskList.module.css): surface fill, --color-border
+   hairline, --radius-md, and a block-size floor written in the shared spacing scale so
+   the target stays comfortable on a touch screen. min-inline-size: 0 stops a long label
+   from forcing the dialog wider than the viewport, and the row wraps onto a second line
+   when the two labels no longer fit side by side — at no width is either control shrunk,
+   truncated or hidden. */
+.dialog button {
+  min-inline-size: 0;
+  min-block-size: calc(var(--space-6) + var(--space-3));
+  padding-block: var(--space-2);
+  padding-inline: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+/* The component renders Cancel first and the confirm control last, so the last button
+   in the dialog is the destructive one and carries the danger colour. The word it shows
+   carries the meaning; the colour only reinforces it. */
+.dialog button:last-of-type {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+  font-weight: var(--font-weight-bold);
+}
+
+@media (hover: hover) {
+  .dialog button:hover {
+    border-color: var(--color-accent);
+    color: var(--color-accent);
+  }
+
+  .dialog button:last-of-type:hover {
+    background-color: var(--color-danger);
+    border-color: var(--color-danger);
+    color: var(--color-on-accent);
+  }
+}
+
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .dialog button {
+    transition:
+      background-color var(--transition-duration) ease-out,
+      border-color var(--transition-duration) ease-out,
+      color var(--transition-duration) ease-out;
+  }
+}
