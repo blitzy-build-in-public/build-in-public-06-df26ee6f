@@ -67,6 +67,31 @@ export const LATEST_SCHEMA_VERSION: number = migrations.reduce(
 );
 
 /**
+ * Renders a migration's version as the SQL text the version pragma needs.
+ *
+ * `PRAGMA user_version` accepts no bound parameter, so its statement text has to be assembled; this
+ * guard is what makes that assembly safe, and it is the only thing that has to hold for the
+ * interpolation in `applyMigrations`. `Number.isSafeInteger` rather than `Number.isInteger` on
+ * purpose: past 2^53 a JavaScript number's text form is exponential — `String(1e21)` is `'1e+21'`,
+ * which SQLite does not read as that version — so only a safe integer guarantees the assembled text
+ * is a run of digits.
+ *
+ * A version failing the guard is a startup failure of the same kind as the version-ahead refusal,
+ * so it is thrown as a plain `Error` naming the offending value.
+ */
+function userVersionLiteral(version: number): string {
+  if (!Number.isSafeInteger(version) || version < 0) {
+    throw new Error(
+      `Refusing to write the schema version ${String(version)}: a migration version must be a ` +
+        `non-negative safe integer, because PRAGMA user_version takes no bound parameter and the ` +
+        `value has to be written as a literal integer.`,
+    );
+  }
+
+  return String(version);
+}
+
+/**
  * Brings the database file up to the newest schema version this build knows.
  *
  * The file's version is read from `PRAGMA user_version`, every migration newer than it is applied in
@@ -100,10 +125,11 @@ export function applyMigrations(db: Database.Database): void {
 
     const applyMigration = db.transaction(() => {
       migration.up(db);
-      // The one statement in this codebase built by interpolation: PRAGMA user_version cannot take a
-      // bound parameter. The value is the migration's own compile-time version number above, never a
-      // request value or any other runtime data.
-      db.exec(`PRAGMA user_version = ${migration.version}`);
+      // The one statement in this codebase whose text is assembled rather than prepared, because
+      // PRAGMA user_version cannot take a bound parameter. `userVersionLiteral` is what keeps that
+      // assembly safe: it refuses anything but a non-negative safe integer, so the value written
+      // here is always a literal run of digits, never a request value or other runtime data.
+      db.exec(`PRAGMA user_version = ${userVersionLiteral(migration.version)}`);
     });
 
     // Immediate rather than deferred: the write lock is taken at once, so two processes opening the

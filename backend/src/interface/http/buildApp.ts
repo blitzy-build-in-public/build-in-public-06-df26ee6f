@@ -2,19 +2,22 @@
  * The application factory of the API's HTTP delivery layer.
  *
  * It assembles the single Fastify instance the process serves from: the framework's bundled pino
- * logger at the configured level, the error contract's one installation, and the two route modules
- * that together register the six routes under `/api`. It constructs nothing else — no database, no
- * repository, no clock — because the composed use cases it drives are handed to it, and it does not
- * listen, because choosing the address and binding the socket is the entry point's job. That is
- * what lets the whole surface, failure paths included, be driven in-process through `app.inject()`.
+ * logger at the configured level with the four framework behaviours this product depends on stated
+ * rather than inherited — no per-request logging, no HEAD twins, the framework's own error paths
+ * handed to the error contract, and a router parameter bound that lets the supplied identifier reach
+ * the route — the error contract's one installation, and the two route modules that together register
+ * the six routes under `/api`. It constructs nothing else — no database, no repository, no clock —
+ * because the composed use cases it drives are handed to it, and it does not listen, because choosing
+ * the address and binding the socket is the entry point's job. That is what lets the whole surface,
+ * failure paths included, be driven in-process through `app.inject()`.
  *
  * Layering: the HTTP interface layer. It imports the two sibling route modules and the error
  * mapper, never an infrastructure module, so it can wire the port-facing use cases without ever
  * naming how a task is stored.
  */
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { LogController, type FastifyInstance } from 'fastify';
 
-import { installErrorHandling } from './errorMapper.js';
+import { answerWithErrorContract, installErrorHandling } from './errorMapper.js';
 import { registerHealthRoutes } from './healthRoutes.js';
 import type { AppDependencies } from './taskRoutes.js';
 import { registerTaskRoutes } from './taskRoutes.js';
@@ -44,6 +47,17 @@ export interface BuildAppOptions {
 }
 
 /**
+ * The longest path parameter the router is allowed to match.
+ *
+ * The contract accepts the identifier as supplied and answers a value that matches no task with 404,
+ * so the router must not refuse an identifier for its length: a long one has to reach the use case
+ * exactly as a short one does, or a task that was deleted and a request that was refused become
+ * distinguishable. This bound is Node's own request-line size, so every request the transport can
+ * deliver is matched by the router, and a longer one never reaches the router at all.
+ */
+const MAX_PATH_PARAMETER_LENGTH = 16 * 1024;
+
+/**
  * Builds the API application, ready to be injected into or listened on by the caller.
  *
  * Registration order is deliberate: the error handler and the not-found handler are installed
@@ -60,9 +74,34 @@ export interface BuildAppOptions {
  * @returns The configured application, with all six routes registered and not listening.
  */
 export function buildApp(deps: AppDependencies, options: BuildAppOptions): FastifyInstance {
-  // Fastify's bundled pino logger is what logs the cause of a 500 while the client receives a
-  // generic body, so only its level is supplied here — no second logger is added beside it.
-  const app = Fastify({ logger: { level: options.logLevel } });
+  const app = Fastify({
+    // Fastify's bundled pino logger is what logs the cause of a 500 while the client receives a
+    // generic body, so only its level is supplied here — no second logger is added beside it.
+    logger: { level: options.logLevel },
+
+    // The framework logs every request it serves at info level by default — an `incoming request`
+    // record carrying the whole request object, URL included, followed by a `request completed`
+    // record. Both are written on the success path, which the contract requires to be silent, so
+    // per-request logging is switched off through the log controller. The 500 path keeps its request
+    // context from the log call in `errorMapper.ts`, which supplies the context itself.
+    logController: new LogController({ disableRequestLogging: true }),
+
+    // The framework registers a HEAD twin of every GET route by default, which would serve nine
+    // method-and-path pairs where the contract names six endpoints. With the twins off, a HEAD falls
+    // to the not-found handler and is answered with the contract's 404, because the contract defines
+    // no 405.
+    exposeHeadRoutes: false,
+
+    // Two failures the framework otherwise answers itself, without ever reaching the error handler: a
+    // path it cannot percent-decode and a path parameter past the router's limit. Handing both to the
+    // contract's one writer is what keeps their responses in the contract's envelope instead of the
+    // framework's default error shape.
+    frameworkErrors: answerWithErrorContract,
+
+    // The router's own limit would refuse a long identifier before any route saw it. Stating it here
+    // is what lets the identifier be accepted as supplied and answered as a missing task.
+    routerOptions: { maxParamLength: MAX_PATH_PARAMETER_LENGTH },
+  });
 
   // Before the routes: both handlers must already be in place for everything registered below.
   installErrorHandling(app);

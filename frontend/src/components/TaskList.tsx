@@ -18,17 +18,11 @@
  */
 
 import type { CreateTaskInput, Task, UpdateTaskInput } from '../api/types';
+// The sentence shown for a failed load is written once, in the state layer, and imported here
+// rather than restated, so the two can never drift apart.
+import { LIST_ERROR_MESSAGE } from '../state/useTasks';
 import { TaskItem } from './TaskItem';
 import styles from './TaskList.module.css';
-
-/**
- * Shown when the list could not be loaded and the caller supplied no message of its own.
- *
- * One sentence naming both the likely cause and what the user can do, because the Retry control
- * beside it is the only remedy the interface offers. It is the component's own copy rather than the
- * state layer's, so this region always has something specific to say.
- */
-const LOAD_ERROR_FALLBACK = 'Could not load tasks. The server may be unreachable.';
 
 /**
  * Props of {@link TaskList}.
@@ -93,13 +87,14 @@ export function TaskList({
   onCancelEdit,
   onDelete,
 }: TaskListProps) {
-  // The caller's message wins; the fallback covers the case where it has none to show, so the
-  // error region is never an alert with nothing in it.
-  const loadErrorMessage = error !== null && error.trim() !== '' ? error : LOAD_ERROR_FALLBACK;
+  // The caller's message wins. `useTasks` returns a non-empty `error` for every failed load, so in
+  // the composed app the region shows that layer's `LIST_ERROR_MESSAGE`; this fallback is only for
+  // a caller that hands the list no message, and keeps the alert from rendering empty.
+  const loadErrorMessage = error !== null && error.trim() !== '' ? error : LIST_ERROR_MESSAGE;
 
   return (
     <section>
-      <h2 className={styles.heading}>Tasks</h2>
+      <h2 className={styles.heading}>Task list</h2>
 
       {/* Announced politely and holding no control: the request is already in flight, the form and
           the filter bar remain usable, and there is nothing for the user to do but wait. */}

@@ -6,6 +6,10 @@
  * the server, confirming removes it for good — the removal survives a reload — and a repeat
  * `DELETE /api/tasks/:id` answers 404.
  *
+ * The other 404 the criterion meets is the one an action finds when the task is already gone from
+ * the server: that test drives it through the interface and asserts the notice region reaches the
+ * screen, because the region and the state that feeds it are owned by different modules.
+ *
  * The criterion is not "delete works" but "delete is impossible without the confirmation", so every
  * path that dismisses the dialog asserts that the task survives on the screen and on the server.
  * Cancelling and pressing Escape are two tests rather than one: they are two separate ways out of
@@ -44,6 +48,15 @@ const KEEPER_TITLE = 'Keep me';
 
 /** The heading `TaskItem` gives the confirmation, and therefore the dialog's accessible name. */
 const CONFIRM_DIALOG_NAME = 'Delete task';
+
+/**
+ * The sentence the notice region shows once an action found its task already gone from the server.
+ *
+ * It is written out here rather than imported from the state layer: this file talks to the
+ * application over HTTP alone, through `e2e/support/api.ts`, so the interface's own rendering is
+ * what proves the outcome reached the screen.
+ */
+const MISSING_TASK_NOTICE = 'That task no longer exists.';
 
 /** The one list item whose text contains `title`. */
 function item(page: Page, title: string): Locator {
@@ -181,6 +194,45 @@ test.describe('delete with a confirmation', () => {
     }
     expect(read.body.error.code).toBe('NOT_FOUND');
     expect(read.body.error.fields).toEqual({});
+  });
+
+  test("a task deleted behind the interface's back leaves the list and shows the notice", async ({
+    page,
+    request,
+  }) => {
+    const seeded = await seedTasks(request);
+    await page.goto('/');
+
+    const doomed = item(page, DOOMED_TITLE);
+    await expect(doomed).toBeVisible();
+
+    // Deleted through the request fixture, behind the page's back: the 204 is the setup's own proof,
+    // and the item stays on the screen because the page still holds the copy its own list request
+    // returned. That stale copy is what an action faces when another reader deleted the task first,
+    // and it is what the checkbox below acts on.
+    expect(await deleteTask(request, seeded.doomed.id)).toBe(204);
+    await expect(doomed).toBeVisible();
+
+    // The row's own checkbox: every item carries one, so an unscoped `getByRole('checkbox')` would
+    // match both rows and fail on a strict-mode violation instead of asking the question the test
+    // meant to ask. Clicking it sends `PATCH` for a task the server no longer holds, which answers
+    // 404 — the failure the interface has to report rather than swallow.
+    await doomed.getByRole('checkbox').click();
+
+    // The notice region, owned by the composition and rendered above the list as a polite status:
+    // located by the sentence it carries rather than by its position, because the loading region is
+    // a status region too and both can be on the page at once.
+    const notice = page.getByRole('status').filter({ hasText: MISSING_TASK_NOTICE });
+    await expect(notice).toBeVisible();
+    await expect(notice).toHaveText(MISSING_TASK_NOTICE);
+    await expect(notice).toHaveAttribute('aria-live', 'polite');
+
+    // The stale item left the list and the task no action named is still listed, on the screen and
+    // in the store the server holds: the notice reports the vanished task rather than standing in
+    // for a list the interface emptied.
+    await expect(doomed).toHaveCount(0);
+    await expect(item(page, KEEPER_TITLE)).toBeVisible();
+    expect((await listTasks(request)).map((task) => task.id)).toEqual([seeded.keeper.id]);
   });
 });
 

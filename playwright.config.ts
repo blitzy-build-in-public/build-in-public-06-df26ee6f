@@ -36,6 +36,17 @@ const API_PORT = resolvePort(process.env.PORT, 3000);
 /** Port the Vite development server listens on — the run's `baseURL`. */
 const WEB_PORT = resolvePort(process.env.VITE_DEV_PORT, 5173);
 
+/**
+ * SQLite file the end-to-end API process opens, relative to the backend workspace directory — the
+ * directory npm makes the working directory of a workspace script — so it names `backend/data/e2e.db`.
+ *
+ * It is exported and read here and by `e2e/globalSetup.ts` because both halves of the run act on the
+ * same file: this configuration hands it to the API process, which creates it, and the hook clears it
+ * before the run. One definition is what keeps the file a run writes to and the file the hook clears
+ * from drifting apart.
+ */
+export const E2E_DATABASE_PATH = './data/e2e.db';
+
 export default defineConfig({
   testDir: './e2e',
 
@@ -70,7 +81,10 @@ export default defineConfig({
 
   use: {
     baseURL: `http://localhost:${WEB_PORT}`,
-    trace: 'on-first-retry',
+    // Captured on the first attempt rather than on a retry, because `retries` is 0 above: a test's
+    // first run is its only run, so a retry-triggered trace could never fire. This mode keeps the
+    // trace only when that attempt fails, which is the failure a report needs evidence for.
+    trace: 'retain-on-first-failure',
     screenshot: 'only-on-failure',
     video: 'off',
   },
@@ -89,10 +103,13 @@ export default defineConfig({
       timeout: 120_000,
       env: {
         PORT: String(API_PORT),
-        // Relative to the backend workspace directory, which npm makes the working directory of a
-        // workspace script — so this is `backend/data/e2e.db`, the file `e2e/globalSetup.ts` clears.
-        DATABASE_PATH: './data/e2e.db',
-        LOG_LEVEL: 'info',
+        // The one definition of the file, above: this process creates it inside the backend
+        // workspace and `e2e/globalSetup.ts` clears that same path before the run.
+        DATABASE_PATH: E2E_DATABASE_PATH,
+        // The suite runs `silent` so its output stays readable: the API's startup record and its
+        // per-request records are not part of what a spec asserts; `.env.example` and the README
+        // state the same level for the test suites.
+        LOG_LEVEL: 'silent',
       },
     },
     {

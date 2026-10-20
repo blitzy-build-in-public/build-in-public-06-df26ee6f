@@ -20,13 +20,11 @@ import { applyMigrations } from './migrations.js';
  * the directory, open the file or migrate it is thrown unchanged, because that is a startup failure
  * the process must report loudly rather than a request failure to translate into a response.
  *
- * @param path Filesystem location of the database file, or `':memory:'` for a private in-memory
- *   database, which has no file and therefore no directory to create.
+ * @param path Filesystem location of the database file. Its parent directory is created
+ *   recursively when it is missing.
  */
 export function openDatabase(path: string): Database.Database {
-  if (path !== ':memory:') {
-    mkdirSync(dirname(resolve(path)), { recursive: true });
-  }
+  mkdirSync(dirname(resolve(path)), { recursive: true });
 
   // The busy timeout makes a writer that arrives while another write is committing wait up to five
   // seconds rather than failing at once, which is what lets concurrent edits resolve as last write

@@ -1,5 +1,7 @@
 import { rmSync } from 'node:fs';
-import { resolve, join } from 'node:path';
+import { resolve } from 'node:path';
+
+import { E2E_DATABASE_PATH } from '../playwright.config';
 
 /**
  * Clears the end-to-end database once, before the run, so every suite starts from
@@ -17,9 +19,10 @@ export default async function globalSetup(): Promise<void> {
   // Playwright resolves the configured hook path against the config directory but
   // leaves the working directory untouched, and the documented `npm run test:e2e`
   // runs at the repository root. The root package's module format is not fixed, so
-  // neither `__dirname` nor `import.meta.url` is relied on here.
-  const dataDir = resolve(process.cwd(), 'backend', 'data');
-  const databasePath = join(dataDir, 'e2e.db');
+  // neither `__dirname` nor `import.meta.url` is relied on here. The path itself
+  // comes from the configuration, which hands the same constant to the API process
+  // through `DATABASE_PATH`, so both halves of the run name one file.
+  const databasePath = resolve(process.cwd(), 'backend', E2E_DATABASE_PATH);
 
   // `force: true` turns a missing file — and a missing parent directory, which is
   // the fresh-checkout case — into a no-op instead of a throw. The directory itself

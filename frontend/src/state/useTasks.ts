@@ -39,8 +39,12 @@ const DEFAULT_FILTERS: TaskFilters = { status: 'all', priority: null, sort: 'cre
 /**
  * Shown when the list itself could not be fetched. One sentence naming both the likely cause and
  * what the user can do, because the retry control is the only remedy the interface offers.
+ *
+ * This is the single place the sentence is written. `error` is this value whenever `status` is
+ * `'error'`, so a failed load is never handed an empty message; the list component renders this
+ * same sentence only as its fallback for a caller that supplies none.
  */
-const LIST_ERROR_MESSAGE = 'Could not load tasks. The server may be unreachable.';
+export const LIST_ERROR_MESSAGE = 'Could not load tasks. The server may be unreachable.';
 
 /**
  * Shown after an action found the task already gone from the server, so the user learns why the

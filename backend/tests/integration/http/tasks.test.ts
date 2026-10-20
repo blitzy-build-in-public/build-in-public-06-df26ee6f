@@ -120,7 +120,7 @@ type FastifyApp = ReturnType<typeof buildApp>;
 type ComposedApp = Awaited<ReturnType<typeof composeApp>>;
 
 /** The request methods this suite drives. */
-type HttpMethod = 'DELETE' | 'GET' | 'PATCH' | 'POST' | 'PUT';
+type HttpMethod = 'DELETE' | 'GET' | 'HEAD' | 'PATCH' | 'POST' | 'PUT';
 
 /**
  * The parts of an injected response this suite reads.
@@ -1554,6 +1554,33 @@ describe('task routes (composed application): an identifier that matches no task
     expect(body.error.message).toContain('not-a-uuid');
   });
 
+  /**
+   * Identifiers longer than the router's own default parameter limit of 100 characters.
+   *
+   * The contract accepts the identifier as supplied, so its length may not decide the answer: each of
+   * these must be answered as an identifier that matches no task, exactly as a short one is.
+   */
+  const OVER_LONG_IDENTIFIER_LENGTHS: readonly number[] = [101, 120];
+
+  it.each(UNKNOWN_IDENTIFIER_CASES)(
+    'answers $label of an over-long identifier with 404, naming it',
+    async (testCase: UnknownIdentifierCase) => {
+      for (const length of OVER_LONG_IDENTIFIER_LENGTHS) {
+        const id = 'a'.repeat(length);
+
+        const { body } = await rejectedRequest(
+          api(),
+          () => request(api(), testCase.method, `/api/tasks/${id}`, testCase.payload),
+          404,
+        );
+
+        expect(body.error.code).toBe('NOT_FOUND');
+        expect(body.error.fields).toEqual({});
+        expect(body.error.message).toContain(id);
+      }
+    },
+  );
+
   it('answers the identifier of a deleted task with 404', async () => {
     const created = await createTask(api(), { title: 'Buy milk' });
     await deleteTask(api(), created.id);
@@ -1599,6 +1626,81 @@ describe('task routes (composed application): an identifier that matches no task
 });
 
 
+describe('task routes (composed application): the served surface', () => {
+  beforeEach(async () => {
+    await composeForTest('http-tasks-surface-');
+  });
+
+  afterEach(async () => {
+    await releaseForTest();
+  });
+
+  it('answers a path that cannot be percent-decoded with the contract 400, not the framework body', async () => {
+    // The router hands a path it cannot decode to the factory's own framework error handler rather
+    // than answering it itself, so the failure arrives through the one mapping like every other.
+    const { response, body } = await rejectedRequest(
+      api(),
+      () => request(api(), 'GET', '/api/tasks/%zz'),
+      400,
+    );
+
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+    expect(body.error.fields).toEqual({});
+    expect(body.error.message).toBe(VALIDATION_ERROR_MESSAGE);
+    // The framework's own code and its own wording are internal detail: the mapping keeps the status
+    // and the failure class, and nothing else about the failure reaches the client.
+    expect(response.body).not.toContain('FST_ERR_BAD_URL');
+    expect(response.body).not.toContain('is not a valid url component');
+  });
+
+  /** A GET route the contract publishes, each of which must have no HEAD twin registered. */
+  interface ServedRouteCase {
+    readonly label: string;
+    readonly url: string;
+  }
+
+  const SERVED_ROUTE_CASES: readonly ServedRouteCase[] = [
+    { label: 'the task list', url: '/api/tasks' },
+    { label: 'the health route', url: '/api/health' },
+  ];
+
+  it.each(SERVED_ROUTE_CASES)(
+    'answers HEAD of $label with 404 naming the method and the path, and still serves its GET',
+    async (testCase: ServedRouteCase) => {
+      // The contract publishes six endpoints and defines no HEAD of any of them, so a HEAD has to
+      // fall to the not-found handler — which is what proves no HEAD twin was registered beside the
+      // GET route.
+      const { body } = await rejectedRequest(api(), () => request(api(), 'HEAD', testCase.url), 404);
+
+      expect(body.error.code).toBe('NOT_FOUND');
+      expect(body.error.fields).toEqual({});
+      expect(body.error.message).toContain('HEAD');
+      expect(body.error.message).toContain(testCase.url);
+
+      expect((await request(api(), 'GET', testCase.url)).statusCode).toBe(200);
+    },
+  );
+
+  it('answers HEAD of the single-task route with 404 rather than serving a HEAD twin of it', async () => {
+    const created = await createTask(api(), { title: 'Buy milk' });
+
+    const { body } = await rejectedRequest(
+      api(),
+      () => request(api(), 'HEAD', `/api/tasks/${created.id}`),
+      404,
+    );
+
+    expect(body.error.code).toBe('NOT_FOUND');
+    expect(body.error.message).toContain('HEAD');
+    expect(body.error.message).toContain(`/api/tasks/${created.id}`);
+
+    // A registered twin would have answered this HEAD with the task it read; the route's own GET
+    // still answers it, so the 404 above is the surface and not a missing task.
+    expect((await readTask(api(), created.id)).id).toBe(created.id);
+  });
+});
+
+
 describe('task routes (storage failure)', () => {
   /**
    * The storage stub every request in this subject reaches.
@@ -1615,8 +1717,8 @@ describe('task routes (storage failure)', () => {
   const ADDRESSED_ID = '11111111-2222-4333-8444-555555555555';
 
   beforeAll(async () => {
-    // `error`, not `silent`: the 500 path has to be seen to log its cause, and a higher level would
-    // emit the request-completion records this subject is not about.
+    // `error`, not `silent`: the 500 path has to be seen to log its cause, and nothing below error
+    // level is of interest to this subject.
     const options: BuildAppOptions = { logLevel: 'error' };
     failureApp = buildApp(storageFailureDependencies(repository), options);
     await failureApp.ready();
@@ -1651,6 +1753,27 @@ describe('task routes (storage failure)', () => {
     expectInternalError(response, [STUB_FAILURE_MESSAGE]);
     expect(repository.calls).toBeGreaterThan(0);
     expectLoggedCause(captured, STUB_FAILURE_MESSAGE);
+  });
+
+  it('logs the request context along with the cause of a 500', async () => {
+    const { response, captured } = await requestCapturingLog(failureApp, () =>
+      request(failureApp, 'GET', `/api/tasks/${ADDRESSED_ID}`),
+    );
+
+    expectInternalError(response, [STUB_FAILURE_MESSAGE]);
+
+    const carriers = parseLogRecords(captured).filter(
+      (record) =>
+        record['level'] === PINO_ERROR_LEVEL && JSON.stringify(record).includes(STUB_FAILURE_MESSAGE),
+    );
+    expect(carriers).not.toHaveLength(0);
+
+    // The failure record carries the request context itself, which is what keeps a 500 as readable as
+    // it was when the framework wrote a per-request record naming the request.
+    for (const record of carriers) {
+      expect(record['method']).toBe('GET');
+      expect(record['url']).toBe(`/api/tasks/${ADDRESSED_ID}`);
+    }
   });
 
   /** One request aimed at a single task, so every remaining route's failure path is covered too. */
@@ -1740,6 +1863,35 @@ describe('task routes (storage failure in the composed application)', () => {
 
     expectInternalError(response, ['no such table', 'SQLITE']);
     expectLoggedCause(captured, 'no such table');
+  });
+});
+
+
+describe('task routes (composed application): what a request writes to the log', () => {
+  beforeEach(async () => {
+    // The level the process serves at, not `silent`: the subject is that a successful request writes
+    // nothing at all, which a silently configured logger could not show.
+    await composeForTest('http-tasks-logging-', 'info');
+  });
+
+  afterEach(async () => {
+    await releaseForTest();
+  });
+
+  it('writes no log record for a successful health, list or create request', async () => {
+    const captured = await captureLogOutput(api(), async () => {
+      // One request of each successful kind: the liveness read, the listing read and a write. The
+      // contract requires silence for all three, and a per-request record would name the URL of the
+      // write's task on the read that follows it.
+      expect((await request(api(), 'GET', '/api/health')).statusCode).toBe(200);
+      expect((await request(api(), 'GET', '/api/tasks')).statusCode).toBe(200);
+      expect((await request(api(), 'POST', '/api/tasks', { title: 'Buy milk' })).statusCode).toBe(201);
+    });
+
+    expect(
+      parseLogRecords(captured),
+      `Expected nothing to be logged on the success path. Captured output: ${captured === '' ? '(nothing)' : captured}`,
+    ).toEqual([]);
   });
 });
 

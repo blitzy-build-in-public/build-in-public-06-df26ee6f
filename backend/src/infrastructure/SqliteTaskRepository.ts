@@ -17,6 +17,7 @@
 import Database from 'better-sqlite3';
 
 import type { TaskRepository } from '../application/TaskRepository.js';
+import { TASK_PRIORITIES } from '../domain/task.js';
 import type { Task, TaskPriority } from '../domain/task.js';
 
 // Every value is bound as a `?` at call time, so no request value can alter the shape of a
@@ -58,9 +59,13 @@ interface TaskRow {
   updated_at: string;
 }
 
-/** True for the priority names the table's CHECK constraint allows and the entity accepts. */
+/**
+ * True for the priority names the entity accepts. The member check is against the domain's
+ * {@link TASK_PRIORITIES}, which is the definition of the three level names, so this reading guard
+ * and the entity's normalisation cannot disagree about what a level is.
+ */
 function isTaskPriority(value: string): value is TaskPriority {
-  return value === 'low' || value === 'medium' || value === 'high';
+  return TASK_PRIORITIES.some((priority) => priority === value);
 }
 
 /** True for a driver value that could be a row, so its columns can be read one by one. */

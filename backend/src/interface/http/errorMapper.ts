@@ -9,7 +9,7 @@
  * types — never an infrastructure module — so it can see what kind of failure occurred without
  * ever seeing how storage produced it.
  */
-import type { FastifyError, FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
 import {
   TaskNotFoundError,
@@ -127,20 +127,47 @@ export function notFoundBody(request: FastifyRequest): ApiErrorBody {
 }
 
 /**
+ * Answers a failure with the status and the body the contract maps it to, logging the cause of a 5xx.
+ *
+ * This is the one writer of a mapped failure, and it is reached from both places a failure can enter
+ * the HTTP layer, so nothing can answer outside the contract's envelope. The server's error handler
+ * calls it for every failure a route or a use case throws. The application factory also passes it to
+ * the framework as the framework's own error handler, which is what covers the two failures the
+ * framework answers before a route is matched — a path it cannot percent-decode and a path parameter
+ * past the router's limit — and which would otherwise reach the client as the framework's default
+ * error shape.
+ *
+ * A failure that maps to a 5xx is logged at error level through the request logger, carrying the error
+ * itself and the context of the request it failed on — which is what the framework's own per-request
+ * records used to supply, and which the factory switches off because nothing may log on the success
+ * path. A 4xx is an expected outcome and is not logged.
+ */
+export function answerWithErrorContract(
+  error: unknown,
+  request: FastifyRequest,
+  reply: FastifyReply,
+): void {
+  const { statusCode, body } = mapError(error);
+  if (statusCode >= 500) {
+    request.log.error(
+      { err: error, method: request.method, url: request.url },
+      'Unexpected error handling request',
+    );
+  }
+  reply.status(statusCode).send(body);
+}
+
+/**
  * Registers the server's error handler and its not-found handler: the single installation point of
  * the error contract.
  *
- * A failure that maps to a 5xx is logged with the request context, which is how an operator reads
- * the cause while the client receives a generic body. A 4xx is an expected outcome and is not
- * logged, and nothing is logged on the success path.
+ * Both answer through this module's own writer, so the failure a route throws and the request no route
+ * matches are shaped by the same code, and neither handler is installed anywhere else. The framework's
+ * two error paths of its own are handed the same writer by the application factory.
  */
 export function installErrorHandling(app: FastifyInstance): void {
   app.setErrorHandler((error, request, reply) => {
-    const { statusCode, body } = mapError(error);
-    if (statusCode >= 500) {
-      request.log.error({ err: error }, 'Unexpected error handling request');
-    }
-    reply.status(statusCode).send(body);
+    answerWithErrorContract(error, request, reply);
   });
 
   app.setNotFoundHandler((request, reply) => {
