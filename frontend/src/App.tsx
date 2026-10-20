@@ -75,6 +75,7 @@ export default function App() {
     updateTask,
     toggleTask,
     deleteTask,
+    readActionFailure,
     retry,
     clearFilters,
   } = useTasks(api);
@@ -113,23 +114,41 @@ export default function App() {
   /**
    * Applies the edit form's patch and leaves edit mode only once the server accepted it, so a
    * rejected save keeps the form open with everything the user typed still in it.
+   *
+   * A refusal is re-thrown as the failure `useTasks` recorded, never reported as the `false` alone:
+   * the server's message and its field map are what the form shows beside the controls the server
+   * named, and a boolean cannot carry them. A call that resolved `false` records one, and a
+   * rejection carrying nothing usable reads as the form's generic not-saved message.
    */
   const handleSave = useCallback(
     async (id: string, input: CreateTaskInput | UpdateTaskInput): Promise<boolean> => {
-      const saved = await updateTask(id, input);
-      if (saved) {
+      if (await updateTask(id, input)) {
         setRequestedEditId(null);
+        return true;
       }
-      return saved;
+
+      throw readActionFailure();
     },
-    [updateTask],
+    [readActionFailure, updateTask],
   );
 
-  /** Creates what the create form submitted; the form clears its own fields once this resolves `true`. */
+  /**
+   * Creates what the create form submitted; the form clears its own fields once this resolves
+   * `true`.
+   *
+   * A refusal is re-thrown for the reason spelled out at `handleSave`: the detail the failure
+   * carries is what the form places beside the field it names, so it is handed on rather than
+   * swallowed into the `false`.
+   */
   const handleCreateSubmit = useCallback(
-    (input: CreateTaskInput | UpdateTaskInput): Promise<boolean> =>
-      createTask(toCreateInput(input)),
-    [createTask],
+    async (input: CreateTaskInput | UpdateTaskInput): Promise<boolean> => {
+      if (await createTask(toCreateInput(input))) {
+        return true;
+      }
+
+      throw readActionFailure();
+    },
+    [createTask, readActionFailure],
   );
 
   /** Completes or reopens one task. The next list load decides what the screen shows. */

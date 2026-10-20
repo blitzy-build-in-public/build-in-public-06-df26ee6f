@@ -4,7 +4,8 @@
  * The hook is the interface's only stateful module — it owns the task list, the filters the server
  * is asked to apply, the notice region and the five actions — so this suite pins the contract every
  * component consumes: what a load settles as, what each action calls on the client, what a rejected
- * action leaves behind, and what happens when the server no longer holds the task an action named.
+ * action leaves behind in state and on the channel its caller reads the failure from, and what
+ * happens when the server no longer holds the task an action named.
  *
  * The API client is an injected argument and is always the fake built by
  * `tests/support/helpers.tsx`: the hook is rendered, not a component, and no case stubs `fetch`,
@@ -20,7 +21,8 @@
 
 import { act, renderHook, waitFor } from '@testing-library/react';
 
-import type { ApiError, TaskApi } from '../../src/api/client';
+import { ApiError } from '../../src/api/client';
+import type { TaskApi } from '../../src/api/client';
 import type { CreateTaskInput, Task, TaskFilters, UpdateTaskInput } from '../../src/api/types';
 import { useTasks } from '../../src/state/useTasks';
 import type { UseTasksResult } from '../../src/state/useTasks';
@@ -76,6 +78,38 @@ function offlineFailure(): ApiError {
 /** The failure the server returns for a task it no longer holds: a real 404 `ApiError`. */
 function missingTaskFailure(taskId: string): ApiError {
   return makeApiError({ status: 404, code: 'NOT_FOUND', message: `Task ${taskId} was not found` });
+}
+
+/** The message the server owns for the `dueDate` rule, spelled as `TaskForm` displays it. */
+const DUE_DATE_FORMAT_MESSAGE = 'Due date must be a date in YYYY-MM-DD format';
+
+/** The message the server owns for the `title` rule. */
+const TITLE_REQUIRED_MESSAGE = 'Title is required';
+
+/** The field map a refused due date answers with — the detail a boolean cannot carry. */
+const REJECTED_FIELDS: Record<string, string> = { dueDate: DUE_DATE_FORMAT_MESSAGE };
+
+/** The 400 a create answers with when it refuses one field, field map and all. */
+function fieldRejection(): ApiError {
+  return makeApiError({
+    status: 400,
+    code: 'VALIDATION_ERROR',
+    message: 'Request validation failed',
+    fields: REJECTED_FIELDS,
+  });
+}
+
+/**
+ * Narrows what the hook's failure channel holds to the failure the client raises.
+ *
+ * That member is typed `unknown`, because a rejection is whatever was thrown, so every case below
+ * narrows rather than trusting the channel's contents.
+ */
+function failureFrom(channel: unknown): ApiError {
+  if (!(channel instanceof ApiError)) {
+    throw new Error(`Expected the channel to hold an ApiError, received ${String(channel)}.`);
+  }
+  return channel;
 }
 
 /** The fake client every case injects; rebuilt in `beforeEach` so no mock state leaks between cases. */
@@ -381,6 +415,100 @@ describe('a mutation the server rejects', () => {
       expect(result.current.error).toBeNull();
       expect(result.current.notice).toBeNull();
     });
+  });
+});
+
+/**
+ * The detail a rejected request carries and the `Promise<boolean>` result cannot: the server's own
+ * message and the field map that places each of its entries beside the control it names. The caller
+ * that awaited the action reads it from `readActionFailure`, which is what `App.tsx` does before it
+ * re-throws it to the form that submitted the request.
+ */
+describe('the failure a rejected action leaves for its caller', () => {
+  it('reports the rejection, with its message and field map, once the action resolves false', async () => {
+    const { result } = await renderReady([makeTask({ id: TASK_ID })]);
+    const failure = fieldRejection();
+    api.createTask.mockRejectedValue(failure);
+
+    expect(result.current.readActionFailure()).toBeNull();
+
+    const outcome = await performAction(() => result.current.createTask(CREATE_INPUT));
+
+    expect(outcome).toBe(false);
+    const reported = failureFrom(result.current.readActionFailure());
+    expect(reported).toBe(failure);
+    expect(reported.status).toBe(400);
+    expect(reported.message).toBe('Request validation failed');
+    expect(reported.fields).toEqual(REJECTED_FIELDS);
+  });
+
+  it('reports the newest rejection, and nothing once an action succeeds', async () => {
+    const { result } = await renderReady([makeTask({ id: TASK_ID })]);
+    const refusedCreate = fieldRejection();
+    const refusedSave = makeApiError({
+      status: 400,
+      code: 'VALIDATION_ERROR',
+      message: 'Request validation failed',
+      fields: { title: TITLE_REQUIRED_MESSAGE },
+    });
+
+    api.createTask.mockRejectedValueOnce(refusedCreate);
+    await performAction(() => result.current.createTask(CREATE_INPUT));
+    expect(failureFrom(result.current.readActionFailure()).fields).toEqual(REJECTED_FIELDS);
+
+    api.updateTask.mockRejectedValueOnce(refusedSave);
+    await performAction(() => result.current.updateTask(TASK_ID, UPDATE_PATCH));
+
+    const newest = failureFrom(result.current.readActionFailure());
+    expect(newest).toBe(refusedSave);
+    expect(newest.fields).toEqual({ title: TITLE_REQUIRED_MESSAGE });
+
+    const outcome = await performAction(() => result.current.createTask(CREATE_INPUT));
+
+    expect(outcome).toBe(true);
+    expect(result.current.readActionFailure()).toBeNull();
+  });
+
+  it('holds nothing while the next attempt is still in flight', async () => {
+    const { result } = await renderReady([]);
+    api.createTask.mockRejectedValueOnce(fieldRejection());
+    await performAction(() => result.current.createTask(CREATE_INPUT));
+    expect(result.current.readActionFailure()).not.toBeNull();
+
+    // The next attempt is held open, so the channel can be read while that attempt is unfinished.
+    // It must describe the newest attempt rather than the rejection the previous one left behind,
+    // so a failure the user has already been shown is never reported as a later attempt's own.
+    const held: { answer: (() => void) | null } = { answer: null };
+    api.createTask.mockImplementation(
+      () =>
+        new Promise<Task>((resolve) => {
+          held.answer = () => {
+            resolve(makeTask({ id: TASK_ID }));
+          };
+        }),
+    );
+
+    let attempt: Promise<boolean> | null = null;
+    await act(async () => {
+      attempt = result.current.createTask(CREATE_INPUT);
+    });
+
+    expect(result.current.readActionFailure()).toBeNull();
+
+    const answer = held.answer;
+    if (answer === null) {
+      throw new Error('The held create never started.');
+    }
+
+    await act(async () => {
+      answer();
+      await attempt;
+    });
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready');
+    });
+
+    expect(result.current.readActionFailure()).toBeNull();
   });
 });
 

@@ -20,10 +20,12 @@
  * - A failed action never touches the load state. `error` is non-null only while `status` is
  *   `'error'`, which the list renders as its retryable whole-list failure; writing an action's
  *   failure there would replace the user's list with an error screen while their form is still
- *   open.
+ *   open. It reports the failure to the caller instead — as `false`, with the rejection itself on
+ *   the channel `readActionFailure` reads — so the form that submitted it can show the server's
+ *   own message beside the control that message names.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ApiError, type TaskApi } from '../api/client';
 import type { CreateTaskInput, Task, TaskFilters, UpdateTaskInput } from '../api/types';
@@ -99,6 +101,24 @@ export interface UseTasksResult {
   toggleTask(id: string, completed: boolean): Promise<boolean>;
   /** Deletes one task, refetching the list. */
   deleteTask(id: string): Promise<boolean>;
+  /**
+   * The failure the most recent action was rejected with, or `null` when it succeeded or none has
+   * settled since the last one was handled.
+   *
+   * Read by the caller that awaited the action, the moment it resolves `false`. The four actions
+   * above report their outcome as a `Promise<boolean>`, which cannot carry the message, the code
+   * and the field map a rejected request arrived with, and a state field could not carry them
+   * either: a value written while the promise settles is not readable from the closure that
+   * resumed after it. So the rejection is held here instead, where that caller reads it
+   * synchronously, and the form it belongs to places each field message beside the control the
+   * server named and the message above the fields when it named none.
+   *
+   * This member is an addition to the result this hook's contract lists, and it exists because
+   * that behaviour is required of the create and edit form: without it a rejected save reaches the
+   * form as the `false` alone, and the server's message — the whole of what the user is told — has
+   * nowhere to be read from.
+   */
+  readActionFailure(): unknown;
   /** Refetches the list with the filters that are active. */
   retry(): void;
   /** Restores the default filters and refetches the list. */
@@ -112,6 +132,11 @@ export function useTasks(api: TaskApi): UseTasksResult {
   const [notice, setNotice] = useState<string | null>(null);
   const [filters, setFiltersState] = useState<TaskFilters>(DEFAULT_FILTERS);
   const [reloadToken, setReloadToken] = useState(0);
+
+  // The channel `readActionFailure` reads. A ref rather than a piece of state because the caller
+  // that awaited an action reads it as soon as that action resolves `false`, before any render the
+  // state update would need.
+  const actionFailureRef = useRef<unknown>(null);
 
   // A load is in flight until an answer arrives for the request the current filters and reload
   // count spell: nothing has answered yet, or the only answer so far describes an earlier request.
@@ -191,17 +216,24 @@ export function useTasks(api: TaskApi): UseTasksResult {
    * A rejection resolves `false` and changes no load state: the caller keeps the user's input and
    * decides what to say. When the task an action named is gone from the server, the stale item is
    * dropped from the list, the user is told, and the list is refetched so the screen matches what
-   * the server holds. The field map a rejected request carries is not readable through this
-   * contract's `Promise<boolean>` result, so the rejection is reported as the `false` alone.
+   * the server holds.
+   *
+   * The rejection itself is recorded on the channel `readActionFailure` reads, because the
+   * `Promise<boolean>` result cannot carry its message, its code and its field map — and those are
+   * what place the server's message beside the control it names. The channel is cleared as the
+   * attempt begins, so a failure left by another action is never read as this attempt's own.
    */
   const runAction = useCallback(
     async (mutation: () => Promise<unknown>, missingTaskId?: string): Promise<boolean> => {
+      actionFailureRef.current = null;
+
       try {
         await mutation();
         setNotice(null);
         reload();
         return true;
       } catch (failure) {
+        actionFailureRef.current = failure;
         if (missingTaskId !== undefined && failure instanceof ApiError && failure.status === 404) {
           setTasks((current) => current.filter((task) => task.id !== missingTaskId));
           setNotice(MISSING_TASK_NOTICE);
@@ -212,6 +244,14 @@ export function useTasks(api: TaskApi): UseTasksResult {
     },
     [reload],
   );
+
+  /**
+   * Reports the failure the most recent action was rejected with, for the caller that awaited it.
+   *
+   * A callback rather than a plain function, so its identity is stable across renders and `App.tsx`
+   * can re-throw what it returns from handlers that keep stable identities of their own.
+   */
+  const readActionFailure = useCallback((): unknown => actionFailureRef.current, []);
 
   const createTask = useCallback(
     (input: CreateTaskInput) => runAction(() => api.createTask(input)),
@@ -244,6 +284,7 @@ export function useTasks(api: TaskApi): UseTasksResult {
     updateTask,
     toggleTask,
     deleteTask,
+    readActionFailure,
     retry,
     clearFilters,
   };

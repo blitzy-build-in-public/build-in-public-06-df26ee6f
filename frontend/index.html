@@ -1,0 +1,30 @@
+<!doctype html>
+<!--
+  frontend/index.html
+
+  The Vite entry document: the served page, the mount point for the bundle and the
+  origin of both module graph roots. Two lines here are load-bearing, and both are
+  pinned by the modules that consume this file:
+
+  - `/src/main.tsx` is loaded as `<script type="module">`, which the browser defers
+    until the document has been parsed, so `src/main.tsx` finds `#root` already in
+    the document and needs no readiness check. It mounts into `#root` below.
+  - `/src/styles/global.css` is linked from here and is deliberately imported by no
+    module: `src/main.tsx` and `src/App.tsx` must not import it, because a second
+    import would bundle the whole sheet — custom properties included — twice.
+
+  The viewport meta is what the mobile-first breakpoints in that sheet need for the
+  320px-to-desktop range, and `lang` is what the document declares its language with.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tasks</title>
+    <link rel="stylesheet" href="/src/styles/global.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
