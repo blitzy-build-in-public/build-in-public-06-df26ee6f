@@ -1,0 +1,194 @@
+/*
+ * frontend/src/components/TaskItem.module.css
+ *
+ * Scoped styles for TaskItem.tsx — one task card: its priority tag, title, description,
+ * due date and overdue marker, the completion checkbox and the Edit/Delete actions.
+ *
+ * Every value comes from a custom property published by frontend/src/styles/global.css;
+ * no colour, spacing, radius or font-size is written as a literal here. The two
+ * breakpoints are the ones that sheet declares (480px and 768px) and only min-width
+ * queries are used, so the base rules are the 320px layout and every wider rule adds to
+ * it rather than replacing it.
+ *
+ * Class inventory — exactly the names TaskItem.tsx applies:
+ *   item  header  title  description  due  dueLabel  dueDate  overdue
+ *   completion  checkboxLabel  actions  action
+ *
+ * The focus indicator is global.css's own `:focus-visible` rule. Nothing here removes,
+ * hides or overrides it, so every control in this card keeps a visible ring.
+ */
+
+.item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  /* Redundant with the universal reset in global.css, stated for the card's own box. */
+  box-sizing: border-box;
+  min-inline-size: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+}
+
+/* The tag, the title and the due date share one wrapping row: at 320px they move onto
+   as many lines as they need instead of shrinking, clipping or pushing the card wider. */
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-inline-size: 0;
+}
+
+/* `overflow-wrap: anywhere` is what keeps a 200-character unbroken title from widening
+   the page: it allows a break inside a word and shrinks the min-content width that a
+   flex item would otherwise refuse to go below. */
+.title {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  margin: 0;
+  font-size: var(--font-size-lg);
+  line-height: var(--line-height-tight);
+  font-weight: var(--font-weight-bold);
+  overflow-wrap: anywhere;
+}
+
+.description {
+  margin: 0;
+  font-size: var(--font-size-base);
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+/* The stored YYYY-MM-DD string is shown exactly as stored — no case change, no
+   letter-spacing change, no reformatting — with its label muted so the date reads first. */
+.due {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1);
+  min-inline-size: 0;
+  font-size: var(--font-size-sm);
+}
+
+.dueLabel {
+  color: var(--color-text-muted);
+}
+
+.dueDate {
+  color: var(--color-text);
+  /* The date stays one unbroken token; it can only hyphenate awkwardly otherwise. */
+  white-space: nowrap;
+}
+
+/* The word "Overdue" is the signal: it is never hidden at any width, never replaced by
+   an icon and never text-transformed into a different word. Colour only reinforces it —
+   the bold weight and the bordered box carry the same meaning in monochrome and for a
+   colour-blind reader. */
+.overdue {
+  padding-inline: var(--space-1);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-sm);
+  color: var(--color-danger);
+  font-weight: var(--font-weight-bold);
+}
+
+.completion {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-inline-size: 0;
+}
+
+/* This row never wraps, so its free space can go negative and the flex items shrink to
+   fit. The label can shrink safely — it wraps — but the box must not: global.css's
+   `.app * { min-inline-size: 0 }` removes the checkbox's intrinsic minimum, and without
+   this a long unbreakable label squeezes the control to a one-pixel sliver. */
+.completion input {
+  flex: none;
+}
+
+/* The label carries the task title, so it can be as long as one: it wraps like the title
+   rather than widening the card. */
+.checkboxLabel {
+  overflow-wrap: anywhere;
+}
+
+/* At 320px the buttons wrap onto more lines and stay fully visible and operable: they are
+   never hidden, collapsed behind a menu, truncated or shrunk below a comfortable target. */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-inline-size: 0;
+}
+
+.action {
+  /* A token block size keeps the target at the 44px minimum without a fixed height. */
+  min-block-size: var(--space-7);
+  padding-block: var(--space-2);
+  padding-inline: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  cursor: pointer;
+  transition: background-color var(--transition-duration) ease-out,
+    border-color var(--transition-duration) ease-out;
+}
+
+/* Hover only where a pointer can actually hover, so a touch device never keeps a sticky
+   hover state on a tapped button. */
+@media (hover: hover) {
+  .action:hover {
+    border-color: var(--color-accent);
+    background-color: var(--color-surface-muted);
+  }
+}
+
+/* Motion is opt-in: with a reduced-motion preference the buttons change state with no
+   transition at all. global.css carries the same guard for every other module. */
+@media (prefers-reduced-motion: reduce) {
+  .action {
+    transition: none;
+  }
+}
+
+/* 480px and up: the metadata sits on the title's line rather than dropping below it, so
+   the row aligns on one baseline. */
+@media (min-width: 480px) {
+  .header {
+    align-items: baseline;
+  }
+}
+
+/* 768px and up: the title and its metadata read on one line, the description spans the
+   card, and the completion control and the actions share the last line with the actions
+   pushed to its end. Placement rather than reordering keeps the visual order equal to the
+   DOM order, so tab order still follows what is on screen; an element this block has no
+   rule for simply flows into the next cell. */
+@media (min-width: 768px) {
+  .item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: var(--space-4);
+    row-gap: var(--space-2);
+  }
+
+  .header,
+  .description {
+    grid-column: 1 / -1;
+  }
+
+  .completion {
+    grid-column: 1;
+  }
+
+  .actions {
+    grid-column: 2;
+    justify-content: flex-end;
+  }
+}
