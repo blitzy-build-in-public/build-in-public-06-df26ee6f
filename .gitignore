@@ -1,0 +1,22 @@
+# Dependencies: the hoisted workspace tree installed by npm ci
+node_modules/
+
+# Build output: backend/dist from tsc, frontend/dist from vite build
+dist/
+
+# Test output: Vitest coverage, the Playwright report and its traces
+coverage/
+playwright-report/
+test-results/
+
+# Local data: the SQLite file the API serves and the end-to-end database
+# (DATABASE_PATH defaults to ./data/todo.db, resolved inside the backend workspace)
+backend/data/
+
+# SQLite sidecars: transient companions of any database, wherever DATABASE_PATH points
+*.db-wal
+*.db-shm
+*.db-journal
+
+# Local environment file; the tracked .env.example documents the variables and their defaults
+.env
