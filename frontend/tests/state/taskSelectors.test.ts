@@ -329,10 +329,21 @@ describe('taskSelectors', () => {
       }
     });
 
-    it('returns the same modifier for a level on every call', () => {
-      for (const level of PRIORITY_LEVELS) {
-        expect(priorityModifier(level)).toBe(priorityModifier(level));
-      }
+    /**
+     * Pins a read as a function of the level alone rather than of the calls around it: every
+     * expected value comes from `MODIFIER_CASES`, and the second pass reads the three levels in a
+     * rotated order, so no level's two reads sit next to each other and an answer that depended on
+     * the call history could not satisfy both. The self-comparison this replaces asserted the unit's
+     * own output against itself, which no deterministic implementation can fail, so it pinned nothing.
+     */
+    it('keys each level the same pinned class name on every call, in either order', () => {
+      // The same three levels one place to the left, so the two passes never share an order.
+      const rotatedCases = [...MODIFIER_CASES.slice(1), ...MODIFIER_CASES.slice(0, 1)];
+      const tableOrder = MODIFIER_CASES.map(({ priority }) => priorityModifier(priority));
+      const rotatedOrder = rotatedCases.map(({ priority }) => priorityModifier(priority));
+
+      expect(tableOrder).toStrictEqual(MODIFIER_CASES.map(({ modifier }) => modifier));
+      expect(rotatedOrder).toStrictEqual(rotatedCases.map(({ modifier }) => modifier));
     });
   });
 });
