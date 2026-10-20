@@ -109,6 +109,8 @@ test.describe('create and edit', () => {
     request,
   }) => {
     await page.goto('/');
+    // The store was cleared before this test, so the account holds nothing yet and the list says so.
+    await expect(page.getByText(EMPTY_LIST_MESSAGE)).toBeVisible();
 
     const form = createForm(page);
     await form.getByLabel('Title').fill('Buy milk');
@@ -119,6 +121,8 @@ test.describe('create and edit', () => {
     await expect(created).toContainText('Medium');
     // No due date is rendered at all: the item omits the region rather than showing a placeholder.
     await expect(created.locator('time')).toHaveCount(0);
+    // An undated task can never be overdue, so the marker is absent together with the date.
+    await expect(created.getByText(/overdue/i)).toHaveCount(0);
     await expect(created.getByRole('checkbox')).not.toBeChecked();
 
     // The screen shows what the server committed, so the open filter returns that same one task.
@@ -136,57 +140,83 @@ test.describe('create and edit', () => {
     page,
     request,
   }) => {
-    const seeded = await createTask(request, { title: 'Draft the plan', priority: 'low' });
-
+    // The task is created through the interface rather than seeded through the API, so this test
+    // covers the whole path: the create form's submit, the item it produces, the in-place edit and
+    // the read that follows the edit.
     await page.goto('/');
-    const beforeEdit = item(page, 'Draft the plan');
-    await expect(beforeEdit).toBeVisible();
+    const create = createForm(page);
+    await create.getByLabel('Title').fill('Buy milk');
+    await create.getByRole('button', { name: 'Add task' }).click();
+    await expect(item(page, 'Buy milk')).toBeVisible();
+
+    // The identifier the edit will address comes from the server, not from the screen.
+    const seeded = onlyTask(await listTasks(request));
+    expect(seeded.title).toBe('Buy milk');
+
+    const beforeEdit = item(page, 'Buy milk');
     await beforeEdit.getByRole('button', { name: 'Edit' }).click();
 
-    // The edit form replaces the item in place and is named after the task it is editing.
-    const form = page.getByRole('form', { name: 'Edit task: Draft the plan' });
-    await form.getByLabel('Title').fill('Draft the release plan');
-    await form.getByLabel('Description').fill('Cover the migration steps and the rollback.');
+    // The edit form replaces the item in place, is named after the task it is editing, opens
+    // holding what the server holds, and keeps Save disabled until a field differs — so the form
+    // can never send the empty patch the API refuses.
+    const form = page.getByRole('form', { name: 'Edit task: Buy milk' });
+    await expect(form).toBeVisible();
+    await expect(form.getByLabel('Title')).toHaveValue('Buy milk');
+    await expect(form.getByRole('button', { name: 'Save' })).toBeDisabled();
+
+    await form.getByLabel('Title').fill('Buy oat milk');
+    await form.getByLabel('Description').fill('Two litres, unsweetened');
     await form.getByLabel('Priority').selectOption('high');
     await form.getByLabel('Due date').fill(FUTURE_DUE_DATE);
+    await expect(form.getByRole('button', { name: 'Save' })).toBeEnabled();
     await form.getByRole('button', { name: 'Save' }).click();
 
     // Saving leaves edit mode, and the item reads as the edited task.
-    const afterEdit = item(page, 'Draft the release plan');
-    await expect(
-      afterEdit.getByRole('heading', { level: 3, name: 'Draft the release plan' }),
-    ).toBeVisible();
+    const afterEdit = item(page, 'Buy oat milk');
+    await expect(afterEdit.getByRole('heading', { level: 3, name: 'Buy oat milk' })).toBeVisible();
     await expect(afterEdit).toContainText('High');
     await expect(afterEdit.locator('time')).toHaveText(FUTURE_DUE_DATE);
-    await expect(afterEdit).toContainText('Cover the migration steps and the rollback.');
+    await expect(afterEdit).toContainText('Two litres, unsweetened');
+    // `2030` is far enough ahead that the edited task can never be flagged overdue.
+    await expect(afterEdit.getByText(/overdue/i)).toHaveCount(0);
     await expect(afterEdit.getByRole('checkbox')).not.toBeChecked();
     await expect(page.getByRole('listitem')).toHaveCount(1);
 
-    // A following GET returns the same four edited fields, with the creation time untouched.
+    // A following GET returns the same four edited fields, so the on-screen list is not the only
+    // witness to the edit. The two timestamps are deliberately not asserted here: the clock half of
+    // this criterion is proved in the unit layer against a fixed clock, so the browser layer never
+    // reads the wall clock and the suite cannot go flaky on a slow machine.
     const read = await getTaskResponse(request, seeded.id);
     expect(read.status).toBe(200);
     const stored = read.body;
     if (isApiErrorBody(stored)) {
       throw new Error(`Expected task ${seeded.id} to be readable, received ${stored.error.code}.`);
     }
-    expect(stored.title).toBe('Draft the release plan');
-    expect(stored.description).toBe('Cover the migration steps and the rollback.');
+    expect(stored.title).toBe('Buy oat milk');
+    expect(stored.description).toBe('Two litres, unsweetened');
     expect(stored.priority).toBe('high');
     expect(stored.dueDate).toBe(FUTURE_DUE_DATE);
     expect(stored.completed).toBe(false);
-    expect(stored.createdAt).toBe(seeded.createdAt);
-    // The wall-clock advance itself is asserted in the unit layer against a fixed clock; here the
-    // edit must simply not move the timestamp backwards.
-    expect(Date.parse(stored.updatedAt)).toBeGreaterThanOrEqual(Date.parse(seeded.updatedAt));
   });
 
-  /** The two title values the form refuses before it sends anything, with the message it shows. */
+  /**
+   * The title values the form refuses, each with the message it shows beside the control. The
+   * whitespace-only value is the trimming rule's own case: the form trims before it measures, so
+   * three spaces are an empty title — while the value the user typed stays in the control and in
+   * the form's own state.
+   *
+   * The form's client-side pre-check may stop the request before it is sent; the outcome asserted
+   * for each of these values — the message beside the field, the field marked invalid, the typed
+   * value kept and no task created — is identical either way, and the server's own 400 path for the
+   * same values is proved by the bodies sent straight to the API further down this file.
+   */
   const refusedTitles: readonly {
     readonly label: string;
     readonly title: string;
     readonly message: string;
   }[] = [
     { label: 'an empty title', title: '', message: TITLE_REQUIRED_MESSAGE },
+    { label: 'a whitespace-only title', title: '   ', message: TITLE_REQUIRED_MESSAGE },
     { label: 'a 201-character title', title: OVER_LONG_TITLE, message: TITLE_TOO_LONG_MESSAGE },
   ];
 
@@ -259,6 +289,20 @@ test.describe('create and edit', () => {
       expect(await listTasks(request)).toHaveLength(0);
     });
   }
+
+  test('reports every refused field of one body at once and creates nothing', async ({ request }) => {
+    // Two rules fail on the same body — an empty title and a date that matches the digit shape but
+    // is not a day February has. The envelope maps one message per offending field, keyed by exactly
+    // the form's field names, so a client can place a message beside each of the two controls and
+    // the refused body leaves no row behind.
+    const error = await postRefusedBody(request, { title: '', dueDate: '2026-02-30' });
+
+    expect(error.error.code).toBe('VALIDATION_ERROR');
+    expect(Object.keys(error.error.fields).sort()).toEqual(['dueDate', 'title']);
+    expect(error.error.fields['title']).toBe(TITLE_REQUIRED_MESSAGE);
+    expect(error.error.fields['dueDate']).toBe(DUE_DATE_CALENDAR_MESSAGE);
+    expect(await listTasks(request)).toHaveLength(0);
+  });
 
   test('shows the refused due date beside the field and keeps what was typed', async ({
     page,

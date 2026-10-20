@@ -13,13 +13,33 @@
  * tie-break. Only the creation-time order reads the timestamps the server returned, because two
  * tasks created inside one millisecond are separated by that same tie-break.
  *
+ * Each sort also compares the rendered order with the order the server returns for the identical
+ * query. That is not a restatement of the assertion beside it: it is the guarantee that the screen
+ * shows the server's single ordering implementation and computes no order of its own — a browser
+ * that re-sorted or re-filtered the list could satisfy the written-out orders and not this one. The
+ * filter and sort controls are shown to reach the server as query parameters for the same reason.
+ *
  * The store is shared with every other spec — one SQLite file, one worker — so each test clears it
  * through `e2e/support/api.ts` before it asserts, and every path stays relative so it resolves
  * against `use.baseURL`.
  */
-import { expect, test, type APIRequestContext, type Locator, type Page } from '@playwright/test';
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type Locator,
+  type Page,
+  type Request,
+} from '@playwright/test';
 
-import { clearAllTasks, createTask, patchTask, type TaskDto } from './support/api';
+import {
+  clearAllTasks,
+  createTask,
+  listTasks,
+  patchTask,
+  type TaskDto,
+  type TaskQuery,
+} from './support/api';
 
 /** The machine's local calendar date, offset by `days`, as a zero-padded `YYYY-MM-DD` string. */
 function localIsoDate(offsetDays: number): string {
@@ -82,6 +102,37 @@ function titlesOf(tasks: readonly TaskDto[]): string[] {
   return tasks.map((task) => task.title);
 }
 
+/** The titles on screen right now, in DOM order — what a moment of the rendered order reads as. */
+async function currentTitles(page: Page): Promise<string[]> {
+  return renderedTitles(page).allTextContents();
+}
+
+/**
+ * Asserts that the rendered order equals the order the server returns for the same query.
+ *
+ * Polled rather than read once, because changing a control refetches the list: the read has to wait
+ * for the newest answer without a fixed pause.
+ */
+async function expectOrderFromServer(
+  page: Page,
+  request: APIRequestContext,
+  query: TaskQuery,
+): Promise<void> {
+  const serverTitles = titlesOf(await listTasks(request, query));
+  await expect.poll(() => currentTitles(page)).toEqual(serverTitles);
+}
+
+/**
+ * True when a request addresses the list route with `name` set to `value`.
+ *
+ * Read off the request the browser actually sent, which is the only way to prove the filter and
+ * sort controls travel as query parameters rather than being applied to a local copy of the list.
+ */
+function isListRequestWith(sent: Request, name: string, value: string): boolean {
+  const url = new URL(sent.url());
+  return url.pathname === '/api/tasks' && url.searchParams.get(name) === value;
+}
+
 /** Earliest due date first, with the undated task after every dated one. */
 function byDueDate(seeded: SeededTasks): TaskDto[] {
   return [seeded.medium, seeded.otherHigh, seeded.high, seeded.undated];
@@ -129,9 +180,19 @@ test.describe('filter and sort', () => {
     const all = [seeded.high, seeded.medium, seeded.undated, seeded.otherHigh];
     await expect(renderedTitles(page)).toHaveText(titlesOf(newestFirst(all)));
 
+    // The same order the server returns for the same query: the screen shows the server's ordering
+    // rather than one of its own.
+    await expectOrderFromServer(page, request, { sort: 'createdAt' });
+
     const bar = filterBar(page);
 
+    // Changing a control reaches the server: the request it produces carries the filter, and the
+    // list the server returns is what the screen then redraws.
+    const completedRequest = page.waitForRequest((sent) =>
+      isListRequestWith(sent, 'status', 'completed'),
+    );
     await bar.getByLabel('Status').selectOption('completed');
+    expect((await completedRequest).url()).toContain('status=completed');
     await expect(renderedTitles(page)).toHaveText([seeded.medium.title]);
 
     await bar.getByLabel('Status').selectOption('open');
@@ -153,7 +214,10 @@ test.describe('filter and sort', () => {
     // due dates, and the undated task is the only low one.
     await bar.getByLabel('Sort by').selectOption('dueDate');
 
+    // The filter travels to the server as a query parameter, like the sort above it.
+    const highRequest = page.waitForRequest((sent) => isListRequestWith(sent, 'priority', 'high'));
     await bar.getByLabel('Priority').selectOption('high');
+    expect((await highRequest).url()).toContain('priority=high');
     await expect(renderedTitles(page)).toHaveText([seeded.otherHigh.title, seeded.high.title]);
 
     await bar.getByLabel('Priority').selectOption('low');
@@ -168,11 +232,17 @@ test.describe('filter and sort', () => {
     const seeded = await seedTasks(request);
 
     await page.goto('/');
+
+    // The sort reaches the server as a query parameter, and the undated task follows every dated
+    // one because that is the server's own rule rather than a local rearrangement.
+    const sortRequest = page.waitForRequest((sent) => isListRequestWith(sent, 'sort', 'dueDate'));
     await filterBar(page).getByLabel('Sort by').selectOption('dueDate');
+    expect((await sortRequest).url()).toContain('sort=dueDate');
 
     await expect(renderedTitles(page)).toHaveText(
       titlesOf([seeded.medium, seeded.otherHigh, seeded.high, seeded.undated]),
     );
+    await expectOrderFromServer(page, request, { sort: 'dueDate' });
   });
 
   test('sorts by priority, high first', async ({ page, request }) => {
@@ -188,6 +258,11 @@ test.describe('filter and sort', () => {
       seeded.medium.title,
       seeded.undated.title,
     ]);
+
+    // The two tied `high` tasks are ordered here by the documented tie-break; this second check is
+    // the one that would fail if the order on screen were ever the browser's rather than the
+    // server's.
+    await expectOrderFromServer(page, request, { sort: 'priority' });
   });
 
   test('sorts by creation time, newest first', async ({ page, request }) => {
@@ -204,5 +279,38 @@ test.describe('filter and sort', () => {
 
     await bar.getByLabel('Sort by').selectOption('createdAt');
     await expect(renderedTitles(page)).toHaveText(titlesOf(newestFirst(all)));
+    await expectOrderFromServer(page, request, { sort: 'createdAt' });
+  });
+
+  test('shows the filtered-empty state with a way out, and clearing restores the defaults', async ({
+    page,
+    request,
+  }) => {
+    const seeded = await seedTasks(request);
+
+    // One completed task, so each filter below matches something on its own and only the two of
+    // them together match nothing.
+    await patchTask(request, seeded.undated.id, { completed: true });
+
+    await page.goto('/');
+    const bar = filterBar(page);
+
+    await bar.getByLabel('Status').selectOption('completed');
+    await expect(renderedTitles(page)).toHaveText([seeded.undated.title]);
+
+    await bar.getByLabel('Priority').selectOption('medium');
+    await expect(page.getByText(/no matching tasks/i)).toBeVisible();
+
+    // A filter that matched nothing is a different screen from an account holding no tasks at all:
+    // only the first one can point the way back, so the empty state must not stand in for it.
+    await expect(page.getByText(/no tasks yet/i)).toHaveCount(0);
+
+    await page.getByRole('button', { name: /clear filters/i }).click();
+
+    await expect(renderedTitles(page)).toHaveCount(4);
+    await expectOrderFromServer(page, request, { sort: 'createdAt' });
+    await expect(bar.getByLabel('Status')).toHaveValue('all');
+    await expect(bar.getByLabel('Priority')).toHaveValue('');
+    await expect(bar.getByLabel('Sort by')).toHaveValue('createdAt');
   });
 });
