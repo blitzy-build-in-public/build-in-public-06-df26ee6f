@@ -82,7 +82,8 @@ function formatBoundAddress(address: AddressInfo | string | null): string {
 /**
  * Builds the whole object graph — database, adapter, ports, use cases and HTTP application — and
  * returns it ready to be injected into or listened on, together with the one function that releases
- * it.
+ * it. A failure while building any part of it leaves nothing behind: the handle the build opened is
+ * released before that failure propagates unchanged.
  *
  * It deliberately does not listen: choosing the port and binding the socket belongs to `main`, and
  * keeping the two apart is what lets a test compose the application over a temporary database file
@@ -92,7 +93,9 @@ function formatBoundAddress(address: AddressInfo | string | null): string {
  *
  * @param config The port, database path and log level the process was configured with.
  * @returns The application, and a `close` that releases both it and the database handle. `close` is
- *   for in-process callers and is called once, when a test or an embedding process is finished.
+ *   for in-process callers and is called once, when a test or an embedding process is finished; it
+ *   releases the database handle whether or not closing the application succeeds, and a failure to
+ *   close the application is still raised to the caller.
  */
 export async function composeApp(
   config: AppConfig,
@@ -101,28 +104,50 @@ export async function composeApp(
   // schema up to date, so the handle below is configured and migrated before anything uses it.
   const db = openDatabase(config.databasePath);
 
-  const repository = new SqliteTaskRepository(db);
-  const clock = systemClock;
+  let app: FastifyInstance;
 
-  const createTask = new CreateTask({ repository, clock });
-  const updateTask = new UpdateTask({ repository, clock });
-  const toggleTaskCompletion = new ToggleTaskCompletion({ repository, clock });
-  const getTask = new GetTask({ repository });
-  const deleteTask = new DeleteTask({ repository });
-  const listTasks = new ListTasks({ repository });
+  try {
+    const repository = new SqliteTaskRepository(db);
+    const clock = systemClock;
 
-  const app = buildApp(
-    { createTask, updateTask, deleteTask, toggleTaskCompletion, getTask, listTasks },
-    { logLevel: config.logLevel },
-  );
+    const createTask = new CreateTask({ repository, clock });
+    const updateTask = new UpdateTask({ repository, clock });
+    const toggleTaskCompletion = new ToggleTaskCompletion({ repository, clock });
+    const getTask = new GetTask({ repository });
+    const deleteTask = new DeleteTask({ repository });
+    const listTasks = new ListTasks({ repository });
+
+    app = buildApp(
+      { createTask, updateTask, deleteTask, toggleTaskCompletion, getTask, listTasks },
+      { logLevel: config.logLevel },
+    );
+  } catch (error) {
+    // Nothing between the open above and the assignment in the block owns the handle yet, so a throw
+    // from here — an unbuildable HTTP application included — would leave it open with no caller left
+    // to release it. The failure is rethrown as it arrived: releasing the handle must not replace the
+    // startup failure the caller has to read.
+    try {
+      db.close();
+    } catch {
+      // Deliberately not raised: the failure below is the one the caller has to read, and a close
+      // failure reported in its place would hide the build failure that caused the release.
+    }
+
+    throw error;
+  }
 
   return {
     app,
     // The two resources are released in the order they were built, so a server that has stopped
     // accepting requests can never be followed by a handle some in-flight request still needs.
     close: async () => {
-      await app.close();
-      db.close();
+      try {
+        await app.close();
+      } finally {
+        // In a `finally` because a server whose close rejects has still stopped accepting requests,
+        // so the handle must be released then too — and the rejection stays the caller's to handle.
+        db.close();
+      }
     },
   };
 }

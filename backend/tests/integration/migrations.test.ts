@@ -7,7 +7,9 @@
  * `PRAGMA user_version`. What this module asserts is exactly that layer: `openDatabase` on a path
  * that does not exist yet creates the directory and migrates the file from version 0 to
  * `LATEST_SCHEMA_VERSION`; an already-migrated file is left untouched; a file carrying a version
- * newer than this build is refused rather than misread; the table has the eight documented columns
+ * newer than this build is refused rather than misread, and that refusal releases the handle it
+ * opened rather than leaving the file and its sidecars open; the table has the eight documented
+ * columns
  * in the documented order with the documented nullability, defaults and types; the two `CHECK`
  * constraints mirroring the domain rules reject a row the domain could never have written; no
  * secondary index was created; and a task inserted through the adapter is still there, field for
@@ -33,7 +35,7 @@
  * these tests assert what the table does with input the domain would never produce, and a domain
  * type would make the invalid cases unwritable.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, readlinkSync } from 'node:fs';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -399,6 +401,36 @@ async function readStoredTask(db: DatabaseHandle, id: string): Promise<Task> {
   return task;
 }
 
+/**
+ * Every open descriptor of this process whose target lies inside `directory`.
+ *
+ * `/proc/self/fd` is the only way a test can see a leaked SQLite connection: the driver reports no
+ * count of the handles it holds, but the file and the `-wal` and `-shm` sidecars a WAL connection
+ * keeps open are each an open descriptor under the directory the file lives in. An entry that
+ * vanishes between listing the directory and reading it resolves to nothing and is skipped. The one
+ * case that uses this probe skips itself where `/proc/self/fd` is absent, so a platform without it
+ * reports no failure.
+ */
+function openTargetsUnder(directory: string): string[] {
+  const targets: string[] = [];
+
+  for (const entry of readdirSync('/proc/self/fd')) {
+    let target: string;
+
+    try {
+      target = readlinkSync(`/proc/self/fd/${entry}`);
+    } catch {
+      continue;
+    }
+
+    if (target.startsWith(directory)) {
+      targets.push(target);
+    }
+  }
+
+  return targets;
+}
+
 describe('the tasks schema', () => {
   describe('a fresh database file', () => {
     it('creates the directory, the file and the current schema version on a first open', () => {
@@ -652,6 +684,37 @@ describe('a database file newer than this build', () => {
     expect(db.pragma('user_version', { simple: true })).toBe(999);
     expect(await readStoredTask(db, VALID_RAW_ROW.id)).toStrictEqual(VALID_RAW_TASK);
   });
+
+  // The refusal above is decided on a handle the caller already owns, so it cannot observe the one
+  // a refused `openDatabase` opens for itself: a version-ahead file refuses to migrate on the way
+  // out of the opener, and a handle left open there leaks the file and its sidecars for the life of
+  // the process. This is the only case in the suite that opens the file through the opener and lets
+  // it throw, which is why the probe below has to be shown to work before its empty result means
+  // anything.
+  it.skipIf(!existsSync('/proc/self/fd'))(
+    'releases the handle it opened when it refuses a newer file, rather than leaking the file',
+    () => {
+      const { db, temp } = openTempDatabase();
+
+      // The probe's own check: while a handle on this file is open, the descriptors a WAL connection
+      // holds — the file and its `-wal` and `-shm` sidecars — are visible under its directory, so a
+      // count of zero afterwards says the handle was released and not that the probe cannot see this
+      // file at all.
+      expect(openTargetsUnder(temp.directory).length).toBeGreaterThan(0);
+      db.close();
+
+      // The file is put ahead of this build by a handle that is then released, so the only connection
+      // that can be open when the opener runs below is the one that call opens.
+      const seed = reopenDatabase(temp);
+      seed.pragma('user_version = 999');
+      seed.close();
+
+      // The refusal still names the version, and the handle it opened is gone: the file, its `-wal`
+      // and its `-shm` are all closed, so nothing is left for the rest of the process to hold.
+      expect(() => openDatabase(temp.path)).toThrow(/999/);
+      expect(openTargetsUnder(temp.directory)).toStrictEqual([]);
+    },
+  );
 });
 
 describe('durability across a close and a reopen', () => {
