@@ -451,7 +451,8 @@ describe('createTaskApi', () => {
     it.each(notFoundCases)(
       'maps a 404 from %s to an ApiError that names the identifier and carries no field messages',
       async (_method, call) => {
-        const message = `Task ${TASK_ID} not found`;
+        // The sentence the server's TaskNotFoundError emits for this id, per the error contract.
+        const message = `Task ${TASK_ID} was not found`;
         fetchMock.mockResolvedValueOnce(errorResponse(404, 'NOT_FOUND', message, {}));
 
         const error = await expectApiError(call(createTaskApi(), TASK_ID));
