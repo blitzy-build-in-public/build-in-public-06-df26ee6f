@@ -1,0 +1,267 @@
+/*
+ * frontend/src/styles/global.css
+ *
+ * The interface's single global stylesheet: the shared design values, the reset, the
+ * base typography, the page-shell classes and the mobile-first breakpoints.
+ *
+ * Loaded once by `frontend/index.html`, which links /src/styles/global.css directly;
+ * Vite fingerprints it into frontend/dist/assets/ for the development server, the
+ * preview server and the production bundle alike.
+ *
+ * Do NOT import this file from `frontend/src/main.tsx` or `frontend/src/App.tsx`: a
+ * second import would bundle the whole sheet twice. App.tsx consumes it through the
+ * custom properties and the global classes described below.
+ *
+ * Published token inventory — consumed by App.tsx and by the component modules in
+ * frontend/src/components/ (TaskForm, TaskList, TaskItem, FilterBar, PriorityTag,
+ * ConfirmDialog). Rename nothing here without updating them.
+ *
+ *   Colour    --color-surface  --color-surface-muted  --color-text  --color-text-muted
+ *             --color-border   --color-accent  --color-on-accent  --color-danger
+ *   Priority  --color-priority-low  --color-priority-medium  --color-priority-high
+ *   Spacing   --space-1 --space-2 --space-3 --space-4 --space-5 --space-6 --space-7
+ *   Radius    --radius-sm --radius-md --radius-lg --radius-full
+ *   Type      --font-family-base  --font-size-sm --font-size-base --font-size-lg
+ *             --font-size-xl  --line-height-tight --line-height-base
+ *             --font-weight-normal --font-weight-bold
+ *   Layout    --content-max-width --page-padding-inline
+ *   Focus     --focus-ring-color --focus-ring-width --focus-ring-offset
+ *   Motion    --transition-duration
+ *
+ * Global classes — only these three; component-scoped names live in *.module.css:
+ *   .app     the page shell: full width, page gutter, capped and centred from 768px
+ *   .notice  the region reporting outcomes that are not field errors
+ */
+
+:root {
+  /* Colour. Every text colour below is measured against the surface it is drawn on. */
+  --color-surface: #ffffff;
+  --color-surface-muted: #f4f5f7;
+  --color-text: #1f2328;
+  --color-text-muted: #5c6672;
+  --color-border: #d0d7de;
+  --color-accent: #1d4ed8;
+  /* Text drawn on an accent-filled control, so the accent is usable as a button fill. */
+  --color-on-accent: #ffffff;
+  /* Errors and the overdue marker. */
+  --color-danger: #a1160e;
+
+  /* Priority — the word Low/Medium/High carries the meaning; these only reinforce it. */
+  --color-priority-low: #146b4a;
+  --color-priority-medium: #8a5a00;
+  --color-priority-high: #b3261e;
+
+  /* Spacing scale. */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+
+  /* Radius. */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-full: 9999px;
+
+  /* Type scale. A system stack only: no font is downloaded, so nothing blocks the
+     first render and no request leaves the machine. */
+  --font-family-base: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue',
+    Arial, sans-serif;
+  --font-size-sm: 0.875rem;
+  --font-size-base: 1rem;
+  --font-size-lg: 1.125rem;
+  --font-size-xl: 1.5rem;
+  --line-height-tight: 1.25;
+  --line-height-base: 1.5;
+  --font-weight-normal: 400;
+  --font-weight-bold: 700;
+
+  /* Layout. The gutter is redefined per breakpoint further down, which is what lets
+     one value be both shared and responsive — a custom property cannot appear in a
+     media condition. */
+  --content-max-width: 60rem;
+  --page-padding-inline: var(--space-4);
+
+  /* Focus ring and the transition duration the component modules animate hover with. */
+  --focus-ring-color: var(--color-accent);
+  --focus-ring-width: 3px;
+  --focus-ring-offset: 2px;
+  --transition-duration: 120ms;
+}
+
+/* Reset */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+}
+
+/* The universal margin reset above also clears the browser's own `margin: auto` on a
+   native dialog, which is what centres a modal one. The delete confirmation is a
+   native modal dialog, so restore that one declaration here — at the lowest possible
+   specificity, leaving ConfirmDialog.module.css free to style the rest. */
+dialog {
+  margin: auto;
+}
+
+html {
+  height: 100%;
+  -webkit-text-size-adjust: 100%;
+  /* Themes and dark mode are out of scope, so the native date input must not follow
+     the operating system's dark scheme. */
+  color-scheme: light;
+}
+
+body,
+#root {
+  /* A minimum, never a fixed height: the page grows with its content. */
+  min-height: 100%;
+}
+
+/* Controls inherit the page's type and cannot exceed their container. No width is
+   declared here on any control: each component decides its own. */
+input,
+select,
+textarea,
+button {
+  font: inherit;
+  color: inherit;
+  max-inline-size: 100%;
+}
+
+input[type='date'] {
+  max-inline-size: 100%;
+}
+
+img,
+svg,
+video,
+canvas {
+  display: block;
+  max-inline-size: 100%;
+  height: auto;
+}
+
+ul,
+ol {
+  /* List semantics come from the element — TaskList renders a real ul/li — while the
+     browser's 40px indent is dropped, because it would contribute to sideways
+     overflow at 320px. */
+  list-style: none;
+  padding: 0;
+}
+
+/* Base typography */
+
+body {
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-normal);
+  line-height: var(--line-height-base);
+  color: var(--color-text);
+  background-color: var(--color-surface);
+  /* Inherited by every descendant, and `anywhere` rather than `break-word` because it
+     also shrinks the min-content width that would otherwise let a 200-character
+     unbroken title widen the page at 320px. */
+  overflow-wrap: anywhere;
+}
+
+/* Headings stay hierarchical rather than chosen for size: h1 is the screen title and
+   h2 introduces a region. */
+h1 {
+  font-size: var(--font-size-xl);
+  line-height: var(--line-height-tight);
+  font-weight: var(--font-weight-bold);
+}
+
+h2 {
+  font-size: var(--font-size-lg);
+  line-height: var(--line-height-tight);
+  font-weight: var(--font-weight-bold);
+}
+
+/* Mobile-first breakpoints. A custom property cannot appear in a media condition, so
+   the widths are literals; the component modules use these same two.
+     base           320px and up to 479px — one column; the primary design, not a fallback
+     480px and up   the form's title takes its own row, the filter controls sit on one
+                    row, a task's metadata moves beside its title
+     768px and up   the content column is capped and centred, and a task reads on one line
+   Only min-width queries are used: the base styles are the narrow layout. */
+
+@media (min-width: 480px) {
+  :root {
+    --page-padding-inline: var(--space-5);
+  }
+}
+
+@media (min-width: 768px) {
+  :root {
+    --page-padding-inline: var(--space-6);
+  }
+}
+
+/* Page shell. .app and .notice are the only global classes; every other class name in
+   the interface is scoped to its component module. */
+
+.app {
+  width: 100%;
+  /* The shell states this itself because `.app *` cannot match its own element: a flex
+     or grid child starts from a min-inline-size of auto, which refuses to shrink and is
+     the usual cause of a page that scrolls sideways at 320px. */
+  min-inline-size: 0;
+  padding-block: var(--space-5);
+  padding-inline: var(--page-padding-inline);
+}
+
+.app * {
+  min-inline-size: 0;
+}
+
+@media (min-width: 768px) {
+  .app {
+    /* The logical form of max-width: it caps the content column and centres it
+       instead of letting it stretch across a wide viewport. */
+    max-inline-size: var(--content-max-width);
+    margin-inline: auto;
+  }
+}
+
+.notice {
+  min-inline-size: 0;
+  margin-block-end: var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface-muted);
+}
+
+/* Focus. This single rule keeps a visible indicator on every interactive element;
+   never add outline: none, outline: 0 or any other rule that removes or hides it. */
+
+:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* Reduced motion. The component modules declare their own hover transitions, so this
+   guard needs !important to win on specificity; it is the only place in this file
+   where !important is permitted. */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}
