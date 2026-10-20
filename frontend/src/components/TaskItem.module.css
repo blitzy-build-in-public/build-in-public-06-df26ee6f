@@ -148,6 +148,16 @@
   }
 }
 
+/* Pressed. Declared outside the hover query so a touch device gets the same feedback, and after
+   the hover rule so a press wins while both apply on a pointer device. The control fills with the
+   accent and takes the on-accent text — a step further than its hover — and nothing here changes
+   its size, position or transition, or the focus indicator global.css draws. */
+.action:active {
+  border-color: var(--color-accent);
+  background-color: var(--color-accent);
+  color: var(--color-on-accent);
+}
+
 /* Motion is opt-in: with a reduced-motion preference the buttons change state with no
    transition at all. global.css carries the same guard for every other module. */
 @media (prefers-reduced-motion: reduce) {

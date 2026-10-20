@@ -21,6 +21,7 @@
  *   Priority  --color-priority-low  --color-priority-medium  --color-priority-high
  *   Spacing   --space-1 --space-2 --space-3 --space-4 --space-5 --space-6 --space-7
  *   Radius    --radius-sm --radius-md --radius-lg --radius-full
+ *   Opacity   --opacity-disabled  --opacity-busy
  *   Type      --font-family-base  --font-size-sm --font-size-base --font-size-lg
  *             --font-size-xl  --line-height-tight --line-height-base
  *             --font-weight-normal --font-weight-bold
@@ -65,6 +66,12 @@
   --radius-md: 0.5rem;
   --radius-lg: 0.75rem;
   --radius-full: 9999px;
+
+  /* Opacity. The two control treatments that are expressed as a translucency rather than a
+     colour — a control that cannot be used and one with a request in flight — so the shared
+     look can be retuned from this one file (TaskForm.module.css consumes both). */
+  --opacity-disabled: 0.7;
+  --opacity-busy: 0.75;
 
   /* Type scale. A system stack only: no font is downloaded, so nothing blocks the
      first render and no request leaves the machine. */

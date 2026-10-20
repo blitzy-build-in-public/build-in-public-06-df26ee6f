@@ -117,6 +117,16 @@
   }
 }
 
+/* Pressed. Both state controls fill with the accent and take the on-accent text, so a press reads
+   the same on a pointer device and on touch; size, position and the focus indicator are untouched.
+   Declared after the hover rules so a press wins while both apply. */
+.empty button:active,
+.error button:active {
+  border-color: var(--color-accent);
+  background-color: var(--color-accent);
+  color: var(--color-on-accent);
+}
+
 /* Gated on `no-preference` so a reduced-motion user gets no transition at all;
    global.css additionally neutralizes transition durations under `reduce`. */
 

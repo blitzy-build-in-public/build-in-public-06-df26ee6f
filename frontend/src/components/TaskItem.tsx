@@ -5,16 +5,23 @@
  * The component holds no data of its own. It takes the task and every action as props, computes
  * nothing but whether the task reads as overdue — and that through `isOverdue`, the single owner
  * of the rule — and never reaches the API: toggling, editing, saving and deleting are all reported
- * to the caller, which decides what a request means. Its one piece of state is whether the delete
- * confirmation is open, because that dialog stands between this item's Delete control and the
- * destructive request, and no other component needs to know about it.
+ * to the caller, which decides what a request means. Its state is its delete confirmation — whether
+ * that confirmation has been asked for and whether it is showing — because that dialog stands
+ * between this item's Delete control and the destructive request, and no other component needs to
+ * know about it.
+ *
+ * No confirmation is mounted until this item's Delete control is pressed. The dialog appears with
+ * that first press and stays in the document from then on, so a list of 1,000 tasks costs 1,000 rows
+ * of content rather than 1,000 closed dialog subtrees, each with its own effects and generated ids.
+ * Closing it through `open` rather than unmounting it is what leaves the platform's own close path
+ * free to return focus to the control that opened it.
  *
  * Priority and overdueness are both carried by a word — `Low`/`Medium`/`High` in the tag and the
  * literal word `Overdue` beside the date — so both survive a monochrome display, a colour-blind
  * reader and a screen reader; colour only reinforces them.
  */
 
-import { useId, useState } from 'react';
+import { memo, useId, useState } from 'react';
 
 import type { CreateTaskInput, Task, UpdateTaskInput } from '../api/types';
 import { isOverdue } from '../state/taskSelectors';
@@ -59,9 +66,13 @@ export interface TaskItemProps {
 /**
  * Renders one task as a list item, in display mode or in edit mode.
  *
+ * The row is memoized, so it renders only when one of its own props changed: the list hands it a
+ * handler already bound to its id, and every other handler arrives with a stable identity of its
+ * own, so a render above the list that changes nothing about this row stops at this boundary.
+ *
  * @param props - the task, its current mode and the handlers for each action
  */
-export function TaskItem({
+export const TaskItem = memo(function TaskItem({
   task,
   onToggle,
   onEdit,
@@ -70,7 +81,19 @@ export function TaskItem({
   onSave,
   onCancelEdit,
 }: TaskItemProps) {
+  // Whether this row's confirmation has been asked for at all, and whether it is showing. Two pieces
+  // of state rather than one, because mounting and showing are different events here: nothing is
+  // mounted until the Delete control is pressed, and from then on the dialog is closed through
+  // `open` alone — unmounting it on close would take with it the focus the browser returns to the
+  // control that opened the modal dialog.
+  const [confirmMounted, setConfirmMounted] = useState<boolean>(false);
   const [confirmOpen, setConfirmOpen] = useState<boolean>(false);
+
+  /** Opens this row's confirmation, mounting it if this is the first time it has been asked for. */
+  function openConfirmation(): void {
+    setConfirmMounted(true);
+    setConfirmOpen(true);
+  }
 
   // The label carries the task's title, so the checkbox is announced as this task's rather than as
   // a bare checkbox among many. Two items can be on screen at once, so the id comes from `useId`
@@ -136,27 +159,32 @@ export function TaskItem({
             <button type="button" className={styles.action} onClick={() => onEdit(task.id)}>
               Edit
             </button>
-            <button type="button" className={styles.action} onClick={() => setConfirmOpen(true)}>
+            <button type="button" className={styles.action} onClick={openConfirmation}>
               Delete
             </button>
           </div>
 
           {/* The confirmation is the only route to the delete request: pressing Delete opens this
               dialog and calls nothing else, while cancelling, pressing Escape and clicking outside
-              all call `onCancel`, which only closes it. */}
-          <ConfirmDialog
-            open={confirmOpen}
-            title="Delete task"
-            message={`“${task.title}” will be deleted. This cannot be undone.`}
-            confirmLabel="Delete"
-            onConfirm={() => {
-              setConfirmOpen(false);
-              onDelete(task);
-            }}
-            onCancel={() => setConfirmOpen(false)}
-          />
+              all call `onCancel`, which only closes it. Nothing is mounted here until that press:
+              the dialog appears with the first one and stays in the document afterwards, so a closed
+              confirmation is never part of a row that has not asked for one, and a reopened one is
+              still the element the browser returns focus to. */}
+          {confirmMounted && (
+            <ConfirmDialog
+              open={confirmOpen}
+              title="Delete task"
+              message={`“${task.title}” will be deleted. This cannot be undone.`}
+              confirmLabel="Delete"
+              onConfirm={() => {
+                setConfirmOpen(false);
+                onDelete(task);
+              }}
+              onCancel={() => setConfirmOpen(false)}
+            />
+          )}
         </>
       )}
     </li>
   );
-}
+});

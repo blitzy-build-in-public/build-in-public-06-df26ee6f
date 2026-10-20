@@ -17,6 +17,8 @@
  * them, and only the caller knows it.
  */
 
+import { memo, useCallback } from 'react';
+
 import type { CreateTaskInput, Task, UpdateTaskInput } from '../api/types';
 // The sentence shown for a failed load is written once, in the state layer, and imported here
 // rather than restated, so the two can never drift apart.
@@ -68,12 +70,83 @@ export interface TaskListProps {
 }
 
 /**
+ * Props of {@link TaskRow}: one task, its mode, and this list's own handlers.
+ *
+ * The list's props minus the ones that describe the list itself, with the mode in place of the
+ * editing target: a row is told whether *it* is the one being edited rather than which id is, so a
+ * row whose mode did not change is handed the same `editing` value as before.
+ */
+interface TaskRowProps {
+  /** The task this row displays, exactly as the API returned it. */
+  task: Task;
+  /** Whether this row is the one being edited in place. */
+  editing: boolean;
+  /** Completes or reopens this row's task, with the value its checkbox moved to. */
+  onToggle: (id: string, completed: boolean) => void;
+  /** Puts this row's task into edit mode. */
+  onEdit: (id: string) => void;
+  /**
+   * Applies the fields the edit form changed to the task with this id, resolving with whether the
+   * save succeeded. The id is bound by the row, so the form supplies only the input.
+   */
+  onSave: (id: string, input: CreateTaskInput | UpdateTaskInput) => Promise<boolean>;
+  /** Leaves edit mode, restoring this row's task as it was. */
+  onCancelEdit: () => void;
+  /** Confirmed deletion of this row's task. */
+  onDelete: (task: Task) => void;
+}
+
+/**
+ * One row of the list: the item for one task, with this list's `onSave(id, input)` bound to that
+ * task's id.
+ *
+ * The binding lives in a component of its own rather than in an arrow built inside the list's
+ * `tasks.map`, and that is what makes a row's props stable by identity: a memoized component skips a
+ * render only when every prop it is handed is unchanged, so an arrow rebuilt on each render of the
+ * list would hand every row a fresh `onSave` every time and no row could ever skip one.
+ */
+const TaskRow = memo(function TaskRow({
+  task,
+  editing,
+  onToggle,
+  onEdit,
+  onSave,
+  onCancelEdit,
+  onDelete,
+}: TaskRowProps) {
+  // Bound once per row, and stable for as long as this row's task and the list's own `onSave` are.
+  // What the edit form receives is this row's `onSave(input)`; which task that input belongs to is
+  // this row's business, not the form's.
+  const handleSave = useCallback(
+    (input: CreateTaskInput | UpdateTaskInput) => onSave(task.id, input),
+    [onSave, task.id],
+  );
+
+  return (
+    <TaskItem
+      task={task}
+      onToggle={onToggle}
+      onEdit={onEdit}
+      onDelete={onDelete}
+      editing={editing}
+      onSave={handleSave}
+      onCancelEdit={onCancelEdit}
+    />
+  );
+});
+
+/**
  * Renders the task list with its loading, empty, filtered-empty and retryable-error states.
+ *
+ * The list is memoized, so a render above it that leaves its own props unchanged — the notice
+ * appearing, a region elsewhere in the screen re-rendering — stops here instead of walking all N
+ * rows. Each row binds its own id inside {@link TaskRow}, which is what keeps a row's props stable
+ * enough for that skip to reach it.
  *
  * @param props - the tasks, the load status, whether filters are active and the handlers for every
  *   action a row can take
  */
-export function TaskList({
+export const TaskList = memo(function TaskList({
   tasks,
   status,
   error,
@@ -138,20 +211,19 @@ export function TaskList({
       {tasks.length > 0 && (
         <ul className={styles.list} role="list">
           {tasks.map((task) => (
-            <TaskItem
+            <TaskRow
               key={task.id}
               task={task}
+              editing={editingTaskId === task.id}
               onToggle={onToggle}
               onEdit={onEdit}
-              onDelete={onDelete}
-              editing={editingTaskId === task.id}
-              // The arrow is what binds this list's `onSave(id, input)` to the item's `onSave(input)`.
-              onSave={(input) => onSave(task.id, input)}
+              onSave={onSave}
               onCancelEdit={onCancelEdit}
+              onDelete={onDelete}
             />
           ))}
         </ul>
       )}
     </section>
   );
-}
+});

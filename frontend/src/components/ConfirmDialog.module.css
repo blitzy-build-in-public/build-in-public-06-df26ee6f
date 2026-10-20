@@ -115,6 +115,22 @@
   }
 }
 
+/* Pressed. The neutral Cancel fills with the accent and takes the on-accent text; the destructive
+   control, which is already filled with the danger colour by its hover, deepens one step using the
+   same mix idiom. Both work on touch as well as with a pointer, and neither changes a control's
+   size, position, transition or focus indicator. */
+.dialog button:active {
+  border-color: var(--color-accent);
+  background-color: var(--color-accent);
+  color: var(--color-on-accent);
+}
+
+.dialog button:last-of-type:active {
+  border-color: color-mix(in srgb, var(--color-danger) 65%, var(--color-text));
+  background-color: color-mix(in srgb, var(--color-danger) 65%, var(--color-text));
+  color: var(--color-on-accent);
+}
+
 @media (hover: hover) and (prefers-reduced-motion: no-preference) {
   .dialog button {
     transition:

@@ -71,6 +71,16 @@
   font: inherit;
 }
 
+/* A control the server rejected is drawn in the danger colour, so an errored field is
+   distinguishable from a valid one by more than the message beneath it. The selector keys on
+   the attribute the component already renders (aria-invalid="true", set on all four controls in
+   TaskForm.tsx) and declares no class the component does not apply. */
+.input[aria-invalid='true'],
+.textarea[aria-invalid='true'],
+.select[aria-invalid='true'] {
+  border-color: var(--color-danger);
+}
+
 .textarea {
   /* Two lines of text plus the vertical padding, so the description reads as a multi-line
      control without relying on the rows attribute alone. */
@@ -131,15 +141,17 @@
 
 .submit:disabled,
 .cancel:disabled {
-  opacity: 0.7;
+  opacity: var(--opacity-disabled);
   cursor: not-allowed;
 }
 
 /* The in-flight hint for a pending submit. Opacity cannot change the button's measured
    size, so the action row never reflows while a request is outstanding, and it leaves the
-   focus indicator drawn. */
-.busy {
-  opacity: 0.75;
+   focus indicator drawn. The selector names the disabled state too, because a pending
+   submission disables its own submit control and the disabled rule above out-specifies a
+   bare class: without that pairing the in-flight opacity and cursor could never apply. */
+.submit:disabled.busy {
+  opacity: var(--opacity-busy);
   cursor: progress;
 }
 
@@ -166,6 +178,22 @@
       background-color var(--transition-duration) ease-out,
       border-color var(--transition-duration) ease-out;
   }
+}
+
+/* Pressed. Declared outside the hover query so a touch device gets the same feedback, and after
+   the hover rules so a press wins while both apply on a pointer device. The accent-filled submit
+   deepens one step — the same mix its hover uses, one ratio further in — and the surface-filled
+   Cancel fills with the accent and takes the on-accent text. Neither rule touches a control's
+   size, position or transition, and the focus indicator stays global.css's own. */
+.submit:not(:disabled):active {
+  border-color: color-mix(in srgb, var(--color-accent) 65%, var(--color-text));
+  background-color: color-mix(in srgb, var(--color-accent) 65%, var(--color-text));
+}
+
+.cancel:not(:disabled):active {
+  border-color: var(--color-accent);
+  background-color: var(--color-accent);
+  color: var(--color-on-accent);
 }
 
 @media (min-width: 480px) {

@@ -2,20 +2,23 @@
  * Component suite for `TaskList` in `src/components/TaskList.tsx` — the rows the list renders and the
  * four states it can be in besides a populated one.
  *
- * Two things this file exists to pin. First, the states are mutually exclusive and chosen by
+ * Three things this file exists to pin. First, the states are mutually exclusive and chosen by
  * `status` and `filtersActive` alone: an account with no tasks invites the user to add one, a filter
  * that matched nothing says exactly that and offers the way back, a load in flight announces itself
  * politely, and a load that failed shows a retryable alert — never two of them at once, and never the
  * empty state standing in for the filtered one. Second, the list adds nothing of its own: it renders
  * the array it was handed in the order it was handed it, fetches nothing, filters nothing, and binds
  * each row's actions to that row's id, which is why the handler assertions here name ids rather than
- * merely counting calls.
+ * merely counting calls. Third, a row costs what the row shows: no delete confirmation is mounted
+ * anywhere in the list until a row's Delete control is pressed, which is read off the document
+ * rather than through a role query, since a closed dialog is hidden from every such query.
  *
  * Every assertion goes through a query a user could perform — role, accessible name, label, text — so
- * no class name, no style, no snapshot and no test id appears anywhere. The suite never stubs `fetch`
- * and never imports `src/api/client.ts`, because a list that fetched would be the only reason to do
- * either; it opens no socket, spawns no process and touches no database, so the layer runs entirely
- * in jsdom.
+ * no class name, no style, no snapshot and no test id appears anywhere; the one case that reads the
+ * document directly does so to count what a role query deliberately cannot see, and for no other
+ * reason. The suite never stubs `fetch` and never imports `src/api/client.ts`, because a list that
+ * fetched would be the only reason to do either; it opens no socket, spawns no process and touches no
+ * database, so the layer runs entirely in jsdom.
  *
  * The clock is fixed at 14 February 2026 because `TaskItem` asks `isOverdue` what "today" is: a suite
  * left on the wall clock would flag a different set of fixtures tomorrow than it does today.
@@ -344,6 +347,30 @@ describe('TaskList', () => {
       const datedItem = itemFor(dated.title);
       expect(within(datedItem).getByText('2026-02-20')).toBeInTheDocument();
       expect(within(datedItem).getByText('Receipts attached')).toBeInTheDocument();
+    });
+
+    it('mounts no confirmation dialog anywhere in the list until a row asks for one', async () => {
+      const user = userEvent.setup();
+      const milk = makeTask({ title: 'Buy milk' });
+      const dentist = makeTask({ title: 'Book dentist' });
+      renderList({ tasks: [milk, dentist] });
+
+      // Counted in the document rather than queried by role, because this case is about the DOM a
+      // row costs rather than about what a user can reach: jsdom applies the user agent's
+      // `dialog:not([open]) { display: none }` rule, so a closed dialog is deliberately invisible to
+      // a role query and the number of them has to be read directly. A row mounts no confirmation at
+      // all until its Delete control is pressed, so 1,000 tasks cost 1,000 rows of content instead
+      // of 1,000 permanently mounted closed dialog subtrees.
+      expect(document.querySelectorAll('dialog')).toHaveLength(0);
+
+      await user.click(within(itemFor(dentist.title)).getByRole('button', { name: 'Delete' }));
+
+      // Exactly one, for the row whose Delete control was pressed: the dialog is now open — which is
+      // what puts it back within reach of the role query — and it names that row's task.
+      const dialog = await screen.findByRole('dialog');
+      expect(document.querySelectorAll('dialog')).toHaveLength(1);
+      expect(dialog).toHaveAttribute('open');
+      expect(dialog).toHaveTextContent(dentist.title);
     });
   });
 
