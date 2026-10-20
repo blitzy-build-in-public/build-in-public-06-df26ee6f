@@ -99,39 +99,52 @@ function suppliedValue(value: string | undefined): string | undefined {
   return value === undefined || value === '' ? undefined : value;
 }
 
-/** Resolves the `status` parameter to a status, or rejects an unsupported value. */
-function parseStatus(value: string | undefined): TaskStatus {
+/**
+ * Resolves the `status` parameter to a status.
+ *
+ * An unsupported value is recorded in `fields` under the parameter's own name and the default is
+ * returned, so that one parse can report every offending parameter at once instead of stopping at
+ * the first — the complete field map the domain's own rules produce, and the one the interface
+ * needs to place a message beside each control in a single pass.
+ */
+function parseStatus(value: string | undefined, fields: Record<string, string>): TaskStatus {
   const candidate = suppliedValue(value);
   if (candidate === undefined) {
     return DEFAULT_STATUS;
   }
   if (!isTaskStatus(candidate)) {
-    throw new ValidationError(VALIDATION_ERROR_MESSAGE, { status: STATUS_MESSAGE });
+    fields['status'] = STATUS_MESSAGE;
+    return DEFAULT_STATUS;
   }
   return candidate;
 }
 
-/** Resolves the `priority` parameter to a priority, to `null` for no filter, or rejects a value. */
-function parsePriority(value: string | undefined): TaskPriority | null {
+/** Resolves the `priority` parameter to a priority or to `null` for no filter, recording a rejection. */
+function parsePriority(
+  value: string | undefined,
+  fields: Record<string, string>,
+): TaskPriority | null {
   const candidate = suppliedValue(value);
   if (candidate === undefined) {
     return null;
   }
   const priority = narrowPriority(candidate);
   if (priority === null) {
-    throw new ValidationError(VALIDATION_ERROR_MESSAGE, { priority: PRIORITY_MESSAGE });
+    fields['priority'] = PRIORITY_MESSAGE;
+    return null;
   }
   return priority;
 }
 
-/** Resolves the `sort` parameter to a sort, or rejects an unsupported value. */
-function parseSort(value: string | undefined): TaskSort {
+/** Resolves the `sort` parameter to a sort, recording an unsupported value under its own name. */
+function parseSort(value: string | undefined, fields: Record<string, string>): TaskSort {
   const candidate = suppliedValue(value);
   if (candidate === undefined) {
     return DEFAULT_SORT;
   }
   if (!isTaskSort(candidate)) {
-    throw new ValidationError(VALIDATION_ERROR_MESSAGE, { sort: SORT_MESSAGE });
+    fields['sort'] = SORT_MESSAGE;
+    return DEFAULT_SORT;
   }
   return candidate;
 }
@@ -144,16 +157,25 @@ function parseSort(value: string | undefined): TaskSort {
  * message beside the control that produced it. Any other parameter in the record is ignored: the
  * record is whatever the client sent, and only these three are part of the contract.
  *
+ * Every parameter is resolved before the rejection is raised, so a request that got more than one
+ * of them wrong is answered with a field key for each rather than for whichever came first.
+ *
  * @throws {ValidationError} when `status`, `priority` or `sort` carries a value outside the
  *   accepted set.
  */
 export function parseTaskQuery(raw: TaskQueryInput): TaskQuery {
+  const fields: Record<string, string> = {};
+
+  const status = parseStatus(raw['status'], fields);
+  const priority = parsePriority(raw['priority'], fields);
+  const sort = parseSort(raw['sort'], fields);
+
+  if (Object.keys(fields).length > 0) {
+    throw new ValidationError(VALIDATION_ERROR_MESSAGE, fields);
+  }
+
   // Exactly three properties: a caller reading the result cannot depend on a raw parameter.
-  return {
-    status: parseStatus(raw['status']),
-    priority: parsePriority(raw['priority']),
-    sort: parseSort(raw['sort']),
-  };
+  return { status, priority, sort };
 }
 
 /** True when `task` belongs in a listing of the given status. */
