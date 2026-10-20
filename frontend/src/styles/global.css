@@ -225,6 +225,21 @@ h2 {
   min-inline-size: 0;
 }
 
+/* Vertical rhythm of the screen. The universal margin reset above zeroes every heading's own
+   margin, and each region App.tsx composes is a bordered card carrying no outer margin of its own,
+   so without these two rules a region's heading would sit on its card's border and one region on
+   the next. Both selectors are scoped to the shell's own direct children, whose only consumer is
+   `frontend/src/App.tsx`: a component's heading inside its own section is one level deeper and
+   keeps the spacing that component's module declares. */
+
+.app > * + * {
+  margin-block-start: var(--space-5);
+}
+
+.app > section > h2 {
+  margin-block-end: var(--space-3);
+}
+
 @media (min-width: 768px) {
   .app {
     /* The logical form of max-width: it caps the content column and centres it
