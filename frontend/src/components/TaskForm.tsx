@@ -14,7 +14,7 @@
  * the payload to `onSubmit` and renders what comes back — so it stays a view over its props and
  * the parent keeps deciding what a save means.
  *
- * Validation is deliberately not this file's to decide. The three checks made before a request is
+ * Validation is deliberately not this file's to decide. The four checks made before a request is
  * sent exist only to give immediate feedback; they repeat the server's own message strings
  * verbatim and never replace the server's answer, which is what arrives in a rejected save. All
  * four controls are labelled, an errored control is linked to its message, and focus is never
@@ -64,6 +64,14 @@ const TITLE_TOO_LONG_MESSAGE = 'Title must be 200 characters or fewer';
 /** The description bound and its message, repeated for immediate feedback. */
 const DESCRIPTION_MAX_LENGTH = 2000;
 const DESCRIPTION_TOO_LONG_MESSAGE = 'Description must be 2000 characters or fewer';
+
+/**
+ * The one date state a field error has to be raised for before a request is sent: a native date
+ * control that cannot represent what the user typed reports an empty `value` while still displaying
+ * the typed text, so its value alone cannot be told apart from a field the user cleared. The wording
+ * is the server's, which produces it for a date that matches `YYYY-MM-DD` without being a real day.
+ */
+const DUE_DATE_INVALID_MESSAGE = 'Due date must be a valid calendar date';
 
 /**
  * Shown whenever a save fails without a usable detail: a server error, an unreachable API, or a
@@ -235,6 +243,17 @@ export function TaskForm({ initialTask, onSubmit, onCancel, submitLabel }: TaskF
   const submitRef = useRef<HTMLButtonElement | null>(null);
   const restoreFocusRef = useRef<boolean>(false);
 
+  // The due-date control itself, held so that a submit can ask the browser what that control holds:
+  // a date it cannot represent reports an empty `value` while the typed text stays on screen, and
+  // only the control, not the state its change events produced, says which of the two this is.
+  const dueDateRef = useRef<HTMLInputElement | null>(null);
+
+  // Whether a submit is already on its way. The `submitting` state below drives the disabled and
+  // busy rendering, but React applies a state update on its next flush, so two submits dispatched
+  // inside one browser task would both pass a check made against it and each send a request. This
+  // flag is set synchronously, before the first await, which is what refuses the second one.
+  const submitInFlightRef = useRef<boolean>(false);
+
   // Two forms can be on screen at once — the create form and an in-place edit form — so every id
   // is prefixed with this instance's own value. Hard-coded ids would collide and leave one form's
   // label pointing at the other form's control.
@@ -347,12 +366,20 @@ export function TaskForm({ initialTask, onSubmit, onCancel, submitLabel }: TaskF
   }
 
   /**
-   * Validates the title and the description as far as a browser can — which is only their length —
-   * then sends the payload. A create sends all four fields and never `completed`; an edit sends
-   * only what differs, and nothing at all when nothing does.
+   * Validates the title, the description and the due date as far as a browser can — the lengths and
+   * whether the date control can represent what was typed — then sends the payload. A create sends
+   * all four fields and never `completed`; an edit sends only what differs, and nothing at all when
+   * nothing does.
    */
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+
+    // Refused first and synchronously: a second submit dispatched inside the same browser task
+    // arrives before React has applied the `submitting` state the disabled control renders from, so
+    // the state alone cannot stop it, and each one that passes sends a create of its own.
+    if (submitInFlightRef.current) {
+      return;
+    }
 
     const nextFieldErrors: Record<string, string> = {};
 
@@ -364,6 +391,14 @@ export function TaskForm({ initialTask, onSubmit, onCancel, submitLabel }: TaskF
 
     if (countCharacters(currentFields.description) > DESCRIPTION_MAX_LENGTH) {
       nextFieldErrors['description'] = DESCRIPTION_TOO_LONG_MESSAGE;
+    }
+
+    // Read from the control rather than from the state: an unrepresentable date reports an empty
+    // value, which travels as "no due date" on a create and as "the user cleared the date" on an
+    // edit — where it would destroy the stored one. The control is also authoritative at the moment
+    // of the send, whatever the change events before it did.
+    if (dueDateRef.current?.validity.badInput === true) {
+      nextFieldErrors['dueDate'] = DUE_DATE_INVALID_MESSAGE;
     }
 
     if (Object.keys(nextFieldErrors).length > 0) {
@@ -389,6 +424,7 @@ export function TaskForm({ initialTask, onSubmit, onCancel, submitLabel }: TaskF
     }
 
     restoreFocusRef.current = true;
+    submitInFlightRef.current = true;
     setSubmitting(true);
     setFieldErrors({});
     setFormError(null);
@@ -404,6 +440,12 @@ export function TaskForm({ initialTask, onSubmit, onCancel, submitLabel }: TaskF
           setDescription('');
           setPriority('medium');
           setDueDate('');
+          // A control that could not represent what was typed is already reporting an empty `value`,
+          // so the empty state below matches it, React writes nothing on that render and the typed
+          // text would stay on screen; only a direct assignment to the control clears it.
+          if (dueDateRef.current !== null) {
+            dueDateRef.current.value = '';
+          }
         }
       } else {
         // The rejection detail, if any, was the parent's to read: a resolved `false` carries none.
@@ -412,6 +454,7 @@ export function TaskForm({ initialTask, onSubmit, onCancel, submitLabel }: TaskF
     } catch (error) {
       showFailure(error);
     } finally {
+      submitInFlightRef.current = false;
       setSubmitting(false);
     }
   }
@@ -514,6 +557,7 @@ export function TaskForm({ initialTask, onSubmit, onCancel, submitLabel }: TaskF
             id={dueDateId}
             className={styles.input}
             type="date"
+            ref={dueDateRef}
             value={dueDate}
             onChange={(event) => {
               setDueDate(event.target.value);

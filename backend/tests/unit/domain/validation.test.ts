@@ -195,6 +195,37 @@ describe('validateNewTask', () => {
       expect(title).toHaveLength(codeUnits);
       expectNewTaskErrors({ title }, expected);
     });
+
+    /**
+     * The rule the bound cannot express. A surrogate pair is one character and stays valid, but a
+     * surrogate on its own is not a character at all: it has no encoding as text, so a title
+     * carrying one could not be held and handed back as the value it was submitted as.
+     */
+    const unpairedSurrogates: { name: string; title: string }[] = [
+      { name: 'a lone high surrogate followed by text', title: '\uD800lone' },
+      { name: 'a lone low surrogate after text', title: 'lone\uDC00' },
+    ];
+
+    it.each(unpairedSurrogates)('rejects a title holding $name', ({ title }) => {
+      expectNewTaskErrors(
+        { title },
+        { title: 'Title must not contain unpaired surrogate characters' },
+      );
+    });
+
+    /**
+     * The shapes the rule must leave alone, so it cannot be satisfied by refusing strings that are
+     * perfectly good text: a surrogate pair is a character the store holds whole, and an embedded
+     * NUL is an ordinary code unit rather than a surrogate at all.
+     */
+    const wellFormedTitles: { name: string; title: string }[] = [
+      { name: 'a surrogate pair', title: 'Buy 🎉 milk' },
+      { name: 'an embedded NUL', title: 'Buy\u0000milk' },
+    ];
+
+    it.each(wellFormedTitles)('accepts a title holding $name', ({ title }) => {
+      expectNewTaskErrors({ title }, {});
+    });
   });
 
   describe('the description rule', () => {
@@ -251,6 +282,15 @@ describe('validateNewTask', () => {
     it.each(astralDescriptions)('$name', ({ description, codeUnits, expected }) => {
       expect(description).toHaveLength(codeUnits);
       expectNewTaskErrors({ title: validTitle, description }, expected);
+    });
+
+    it('rejects a description holding an unpaired surrogate', () => {
+      // The two fields share the rule, and a description is the longer field, so a lone surrogate
+      // can arrive buried in text the length bound would have allowed.
+      expectNewTaskErrors(
+        { title: validTitle, description: 'Two \uD800 litres' },
+        { description: 'Description must not contain unpaired surrogate characters' },
+      );
     });
   });
 
@@ -833,8 +873,9 @@ describe('FIELD_MESSAGES drift guard', () => {
    * rather than read from the cases above it: the guard then holds when it is the only case selected,
    * and it needs no shared state and no ordering.
    *
-   * The create side supplies the required, over-long and non-string title, the over-long and
-   * non-string description, the unsupported priority, the malformed due date, the well-shaped due
+   * The create side supplies the required, over-long and non-string title, the title that holds an
+   * unpaired surrogate, the over-long and non-string description, the description that holds an
+   * unpaired surrogate, the unsupported priority, the malformed due date, the well-shaped due
    * date that is no calendar date and the completion supplied on a create; the patch side supplies
    * the completion that is not a boolean, the unknown property and the three read-only names.
    */
@@ -843,12 +884,20 @@ describe('FIELD_MESSAGES drift guard', () => {
     { name: 'an over-long title', validate: () => validateNewTask({ title: overTitleMax }) },
     { name: 'a title of another kind', validate: () => validateNewTask({ title: 3 }) },
     {
+      name: 'a title holding an unpaired surrogate',
+      validate: () => validateNewTask({ title: '\uD800lone' }),
+    },
+    {
       name: 'an over-long description',
       validate: () => validateNewTask({ title: validTitle, description: overDescriptionMax }),
     },
     {
       name: 'a description of another kind',
       validate: () => validateNewTask({ title: validTitle, description: null }),
+    },
+    {
+      name: 'a description holding an unpaired surrogate',
+      validate: () => validateNewTask({ title: validTitle, description: 'Two \uDC00 litres' }),
     },
     {
       name: 'an unsupported priority',

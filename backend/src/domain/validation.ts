@@ -38,8 +38,10 @@ export const FIELD_MESSAGES = Object.freeze({
   titleRequired: 'Title is required',
   titleTooLong: `Title must be ${TITLE_MAX_LENGTH} characters or fewer`,
   titleNotString: 'Title must be a string',
+  titleNotWellFormed: 'Title must not contain unpaired surrogate characters',
   descriptionTooLong: `Description must be ${DESCRIPTION_MAX_LENGTH} characters or fewer`,
   descriptionNotString: 'Description must be a string',
+  descriptionNotWellFormed: 'Description must not contain unpaired surrogate characters',
   priorityInvalid: 'Priority must be one of: low, medium, high',
   dueDateInvalidFormat: 'Due date must be a date in YYYY-MM-DD format',
   dueDateNotCalendarDate: 'Due date must be a valid calendar date',
@@ -120,10 +122,54 @@ function characterCount(value: string): number {
 }
 
 /**
+ * The boundaries of the two UTF-16 surrogate blocks. A high surrogate followed by a low one is one
+ * character outside the basic plane; either surrogate on its own is not a character at all.
+ */
+const HIGH_SURROGATE_FIRST = 0xd800;
+const HIGH_SURROGATE_LAST = 0xdbff;
+const LOW_SURROGATE_FIRST = 0xdc00;
+const LOW_SURROGATE_LAST = 0xdfff;
+
+/**
+ * Whether the code units of `value` form well-formed UTF-16, so that every character in it is one
+ * the product can hold and hand back unchanged.
+ *
+ * A string holding an unpaired surrogate is not text this product can store and return as it was
+ * given: text is held as UTF-8, which has no encoding for an unpaired surrogate, so a value that
+ * carries one cannot come back as the value it was. Accepting it would therefore let what a create
+ * reports differ from what a later read returns, and the rule belongs here, on the value, rather
+ * than with whatever holds it.
+ *
+ * The scan reads the string's code units directly: a high surrogate must be followed by a low
+ * surrogate, and a low surrogate must be preceded by a high one. A paired low surrogate is skipped
+ * rather than examined, so it is never taken for a lone one.
+ *
+ * @param value The supplied string, before trimming.
+ * @returns `true` when every code unit in `value` belongs to a well-formed sequence.
+ */
+function isWellFormedUtf16(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const unit = value.charCodeAt(index);
+    if (unit >= HIGH_SURROGATE_FIRST && unit <= HIGH_SURROGATE_LAST) {
+      // Reading past the end yields NaN, so a trailing high surrogate fails this comparison and is
+      // reported as unpaired rather than passed over.
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= LOW_SURROGATE_FIRST && next <= LOW_SURROGATE_LAST)) {
+        return false;
+      }
+      index += 1;
+    } else if (unit >= LOW_SURROGATE_FIRST && unit <= LOW_SURROGATE_LAST) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * The message for the `title` field, or `null` when the supplied title is acceptable.
  *
- * An absent title is an error only where the mode requires one; a supplied title must be a
- * string, and is trimmed before its length is measured.
+ * An absent title is an error only where the mode requires one; a supplied title must be a string
+ * holding well-formed text, and is trimmed before its length is measured.
  */
 function titleMessage(input: Readonly<Record<string, unknown>>, required: boolean): string | null {
   if (!hasKey(input, 'title')) {
@@ -133,6 +179,9 @@ function titleMessage(input: Readonly<Record<string, unknown>>, required: boolea
   const value = input['title'];
   if (typeof value !== 'string') {
     return FIELD_MESSAGES.titleNotString;
+  }
+  if (!isWellFormedUtf16(value)) {
+    return FIELD_MESSAGES.titleNotWellFormed;
   }
 
   // Trimming precedes the bound, so a whitespace-only title is empty rather than long, and the
@@ -147,7 +196,7 @@ function titleMessage(input: Readonly<Record<string, unknown>>, required: boolea
 /**
  * The message for the `description` field, or `null` when it is acceptable or absent. An absent
  * description is valid and means `""`; `""` is valid and clears the description; `null` is not a
- * description.
+ * description, and a supplied one must be a string holding well-formed text.
  */
 function descriptionMessage(input: Readonly<Record<string, unknown>>): string | null {
   if (!hasKey(input, 'description')) {
@@ -157,6 +206,9 @@ function descriptionMessage(input: Readonly<Record<string, unknown>>): string | 
   const value = input['description'];
   if (typeof value !== 'string') {
     return FIELD_MESSAGES.descriptionNotString;
+  }
+  if (!isWellFormedUtf16(value)) {
+    return FIELD_MESSAGES.descriptionNotWellFormed;
   }
   return characterCount(normalizeDescription(value)) > DESCRIPTION_MAX_LENGTH
     ? FIELD_MESSAGES.descriptionTooLong

@@ -8,8 +8,10 @@
  * radius or font size is introduced. Only class selectors appear: an element selector in
  * a CSS module is left unscoped and would leak into the whole document.
  *
- * The focus indicator is deliberately absent. The single `:focus-visible` rule in
- * global.css draws it, and nothing in this file removes or hides it.
+ * The focus indicator belongs to global.css, whose single `:focus-visible` rule draws it from
+ * the shared focus tokens, and nothing in this file removes or hides it. The one position that
+ * rule cannot reach — the date control's internal picker indicator — gets the same ring from
+ * the rule beside the other control rules, again out of the published tokens.
  *
  * Layout contract (mobile-first):
  *   base, 320px and up to 479px   one column; every field takes the full width
@@ -79,6 +81,17 @@
 .textarea[aria-invalid='true'],
 .select[aria-invalid='true'] {
   border-color: var(--color-danger);
+}
+
+/* The date control's fourth internal focus position — the native picker indicator, which the
+   browser exposes as its own tab stop — holds focus inside the control rather than on it, so
+   global.css's `:focus-visible` rule cannot match the field and no ring would be drawn while
+   focus is there. `:focus-within` matches in exactly that case, and the `:not(:focus-visible)`
+   guard keeps this rule to the position the global rule misses, so the other three positions
+   keep exactly the ring they already had. Same tokens, so this ring cannot drift from that one. */
+.input[type='date']:focus-within:not(:focus-visible) {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .textarea {

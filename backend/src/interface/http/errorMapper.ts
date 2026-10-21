@@ -9,7 +9,16 @@
  * types — never an infrastructure module — so it can see what kind of failure occurred without
  * ever seeing how storage produced it.
  */
-import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { STATUS_CODES } from 'node:http';
+import type { Socket } from 'node:net';
+
+import type {
+  ConnectionError,
+  FastifyError,
+  FastifyInstance,
+  FastifyReply,
+  FastifyRequest,
+} from 'fastify';
 
 import {
   TaskNotFoundError,
@@ -75,6 +84,40 @@ function isFastifyError(value: unknown): value is FastifyError {
 }
 
 /**
+ * The status a failure the transport itself reports keeps under the contract.
+ *
+ * Such a failure never becomes a request: the socket's own error handler answers it before a route is
+ * matched, so its status is read from the transport's own code rather than from a framework error. A
+ * request line or header block past Node's limit is 431, a request that timed out mid-flight is 408,
+ * and every other failure to parse the request line is a bad request.
+ */
+function transportStatusCode(code: string): number {
+  switch (code) {
+    case 'HPE_HEADER_OVERFLOW':
+      return 431;
+    case 'ERR_HTTP_REQUEST_TIMEOUT':
+      return 408;
+    default:
+      return 400;
+  }
+}
+
+/**
+ * Maps a failure the socket's own error handler reports to the contract's status and body.
+ *
+ * The body is the one every client failure carries — the contract's validation class with an empty
+ * field map, because such a failure belongs to no field — so a request the transport refused is
+ * shaped exactly like a request a route rejected. This is the one place that answer is built for the
+ * transport's path.
+ */
+function mapTransportFailure(code: string): { statusCode: number; body: ApiErrorBody } {
+  return {
+    statusCode: transportStatusCode(code),
+    body: envelope('VALIDATION_ERROR', VALIDATION_ERROR_MESSAGE, {}),
+  };
+}
+
+/**
  * Maps a thrown value to the status and the body the client receives.
  *
  * The branch order decides the contract: the domain's own failures win over the framework's
@@ -100,6 +143,13 @@ export function mapError(error: unknown): { statusCode: number; body: ApiErrorBo
   }
 
   if (isFastifyError(error)) {
+    // A failure the transport met before any request was parsed reaches no route at all: the socket
+    // answers it, so it is mapped from the transport's own code. It keeps that failure's status under
+    // the contract's one validation class, and the transport's own wording is not echoed.
+    if (error.code === 'HPE_HEADER_OVERFLOW' || error.code === 'ERR_HTTP_REQUEST_TIMEOUT') {
+      return mapTransportFailure(error.code);
+    }
+
     // The content-type-parser failures are the only way an absent or unparsable JSON body reaches
     // this handler; both mean the same thing to the client: send a JSON object.
     if (
@@ -134,13 +184,14 @@ export function notFoundBody(request: FastifyRequest): ApiErrorBody {
 /**
  * Answers a failure with the status and the body the contract maps it to, logging the cause of a 5xx.
  *
- * This is the one writer of a mapped failure, and it is reached from both places a failure can enter
- * the HTTP layer, so nothing can answer outside the contract's envelope. The server's error handler
- * calls it for every failure a route or a use case throws. The application factory also passes it to
- * the framework as the framework's own error handler, which is what covers the two failures the
- * framework answers before a route is matched — a path it cannot percent-decode and a path parameter
- * past the router's limit — and which would otherwise reach the client as the framework's default
- * error shape.
+ * This is the writer for every failure that reaches a route or one of the framework's own error
+ * paths, and the failures the transport meets before a request exists are answered by
+ * {@link answerTransportError} below through the same mapping, so nothing can answer outside the
+ * contract's envelope. The server's error handler calls it for every failure a route or a use case
+ * throws. The application factory also passes it to the framework as the framework's own error
+ * handler, which is what covers the two failures the framework answers before a route is matched — a
+ * path it cannot percent-decode and a path parameter past the router's limit — and which would
+ * otherwise reach the client as the framework's default error shape.
  *
  * A failure that maps to a 5xx is logged at error level through the request logger, carrying the error
  * itself and the context of the request it failed on — which is what the framework's own per-request
@@ -160,6 +211,41 @@ export function answerWithErrorContract(
     );
   }
   reply.status(statusCode).send(body);
+}
+
+/**
+ * Answers a failure the transport met before any request existed: the socket's own client-error
+ * handler.
+ *
+ * A request line or a header block past Node's own limit, or a request that times out mid-flight, is
+ * reported on the socket instead of to a route, so it reaches neither a route handler nor the error
+ * handler nor the framework's framework-error channel. Handed those failures here, the writer states
+ * the contract's answer on the socket itself, so even a request the transport refused is shaped by
+ * the one mapping and no response leaves the API as the framework's default error shape.
+ *
+ * Nothing is logged: a client-side parse failure is the client's fault and an expected 4xx, not a
+ * server failure to report.
+ *
+ * @param error The failure the transport reported; its `code` names the transport's own condition.
+ * @param socket The connection the refused request arrived on. A connection already gone or no longer
+ *   writable is left alone, because nothing can be delivered on it.
+ */
+export function answerTransportError(error: ConnectionError, socket: Socket): void {
+  if (socket.destroyed || !socket.writable) {
+    return;
+  }
+
+  const { statusCode, body } = mapTransportFailure(error.code);
+  const payload = JSON.stringify(body);
+  const head =
+    `HTTP/1.1 ${statusCode} ${STATUS_CODES[statusCode] ?? 'Error'}\r\n` +
+    `Content-Length: ${Buffer.byteLength(payload)}\r\n` +
+    'Content-Type: application/json; charset=utf-8\r\n' +
+    'Connection: close\r\n' +
+    '\r\n';
+
+  socket.write(head + payload);
+  socket.end();
 }
 
 /**

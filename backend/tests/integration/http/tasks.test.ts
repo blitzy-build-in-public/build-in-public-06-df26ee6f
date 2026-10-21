@@ -1,13 +1,15 @@
 /**
  * Integration suite for the five task routes: the interface contract, executed end to end.
  *
- * What it proves, and on which path. Every request below is delivered in-process through
+ * What it proves, and on which path. Every request below but one is delivered in-process through
  * `app.inject()`, so no socket and no HTTP client is involved, and the subject is the product's own
  * composition: the route table, the request parsing, the six use cases, the SQLite adapter and the
  * file those sit on, wired by `composeApp` in `src/main.ts` — the one module allowed to name a
  * concrete implementation. The happy paths, the query parameters, the 400s and the 404s therefore run
  * against the application the process really serves, and the object graph is never assembled by hand
- * for them.
+ * for them. The exception is the request line the transport refuses before a request exists: the
+ * injector runs a request through the router and cannot deliver it, so that one case opens a socket of
+ * its own.
  *
  * The 500 paths need storage to fail on demand, so they are driven twice. `buildApp` over a
  * repository that throws isolates the error mapping from storage entirely; and one case composes the
@@ -32,6 +34,8 @@
  * anything about optimistic concurrency — the contract is last write wins and defines no conflict
  * status.
  */
+import { connect, type AddressInfo } from 'node:net';
+
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { CreateTask } from '../../../src/application/CreateTask.js';
@@ -1702,6 +1706,68 @@ describe('task routes (composed application): an identifier that matches no task
   );
 });
 
+/** One raw HTTP response, read off a real socket rather than through the in-process injector. */
+interface RawHttpResponse {
+  /** The status line exactly as the transport wrote it, e.g. `431 Request Header Fields Too Large`. */
+  readonly statusLine: string;
+  /** The response headers, keyed by their lower-cased name and flattened to a string. */
+  readonly headers: Record<string, string>;
+  /** The response body: everything after the blank line that ends the headers. */
+  readonly body: string;
+}
+
+/**
+ * Delivers one request over a real socket and reads the whole response back verbatim.
+ *
+ * A request the transport refuses before a request exists cannot be delivered through `app.inject()`,
+ * which runs the request through the router, so the transport's own paths are driven over a genuine
+ * connection. The socket is destroyed in the `finally`, so a case that fails an assertion leaves no
+ * connection open.
+ *
+ * @param port The bound port of the application under test.
+ * @param requestLine The request line to send, without its trailing CRLF.
+ */
+async function rawHttpExchange(port: number, requestLine: string): Promise<RawHttpResponse> {
+  const socket = connect({ port, host: '127.0.0.1' });
+  const chunks: Buffer[] = [];
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      socket.on('error', reject);
+      socket.on('data', (chunk: Buffer) => {
+        chunks.push(chunk);
+      });
+      socket.on('close', () => {
+        resolve();
+      });
+      socket.once('connect', () => {
+        socket.write(`${requestLine}\r\nHost: 127.0.0.1\r\n\r\n`);
+      });
+    });
+  } finally {
+    socket.destroy();
+  }
+
+  const received = Buffer.concat(chunks).toString('utf8');
+  const separator = received.indexOf('\r\n\r\n');
+  const head = separator === -1 ? received : received.slice(0, separator);
+  const [statusLine = '', ...headerLines] = head.split('\r\n');
+
+  const headers: Record<string, string> = {};
+  for (const line of headerLines) {
+    const colon = line.indexOf(':');
+    if (colon !== -1) {
+      headers[line.slice(0, colon).trim().toLowerCase()] = line.slice(colon + 1).trim();
+    }
+  }
+
+  return {
+    statusLine,
+    headers,
+    body: separator === -1 ? '' : received.slice(separator + 4),
+  };
+}
+
 
 describe('task routes (composed application): the served surface', () => {
   beforeEach(async () => {
@@ -1728,6 +1794,48 @@ describe('task routes (composed application): the served surface', () => {
     // and the failure class, and nothing else about the failure reaches the client.
     expect(response.body).not.toContain('FST_ERR_BAD_URL');
     expect(response.body).not.toContain('is not a valid url component');
+  });
+
+  it('answers an over-long request line with the contract 431, not the framework body', async () => {
+    // A request line past Node's own limit is refused by the transport before it becomes a request, so
+    // it reaches neither a route nor the error handler nor the framework's framework-error channel:
+    // `app.inject()` runs the request through the router and cannot deliver it, and a real connection
+    // is the only way to drive the path.
+    const app = api();
+    await app.listen({ port: 0, host: '127.0.0.1' });
+
+    const bound = app.server.address();
+    if (typeof bound !== 'object' || bound === null) {
+      throw new Error('The application did not bind a TCP address');
+    }
+    const address: AddressInfo = bound;
+
+    const response = await rawHttpExchange(
+      address.port,
+      `GET /api/tasks/${'a'.repeat(20_000)} HTTP/1.1`,
+    );
+
+    // The raw status line, version included, so the reason phrase is asserted as the transport wrote
+    // it rather than only its first token.
+    expect(response.statusLine).toBe('HTTP/1.1 431 Request Header Fields Too Large');
+    expect(response.headers['content-type']).toBe('application/json; charset=utf-8');
+
+    const body = expectErrorEnvelope(JSON.parse(response.body), 431);
+    expect(body).toEqual({
+      error: { code: 'VALIDATION_ERROR', message: VALIDATION_ERROR_MESSAGE, fields: {} },
+    });
+    // The framework's own wording and its status key must not ride along beside the envelope.
+    expect(response.body).not.toContain('Exceeded maximum allowed HTTP header size');
+    expect(response.body).not.toContain('"statusCode"');
+
+    // A long identifier the transport can still deliver has to reach the router and be answered as a
+    // missing task: the bound is Node's own request-line size, not the router refusing a long
+    // parameter before any route saw it.
+    const { body: control } = await rejectedRequest(api(), () =>
+      request(api(), 'GET', `/api/tasks/${'a'.repeat(8000)}`),
+      404,
+    );
+    expect(control.error.code).toBe('NOT_FOUND');
   });
 
   /** A GET route the contract publishes, each of which must have no HEAD twin registered. */

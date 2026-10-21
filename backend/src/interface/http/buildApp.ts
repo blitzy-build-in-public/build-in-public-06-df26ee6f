@@ -2,11 +2,12 @@
  * The application factory of the API's HTTP delivery layer.
  *
  * It assembles the single Fastify instance the process serves from: the framework's bundled pino
- * logger at the configured level with the four framework behaviours this product depends on stated
- * rather than inherited — no per-request logging, no HEAD twins, the framework's own error paths
- * handed to the error contract, and a router parameter bound that lets the supplied identifier reach
- * the route — the error contract's one installation, and the two route modules that together register
- * the six routes under `/api`. It constructs nothing else — no database, no repository, no clock —
+ * logger at the configured level with the five framework behaviours this product depends on stated
+ * rather than inherited — no per-request logging, no HEAD twins, the framework's error paths and the
+ * transport's own request-line failures handed to the error contract, and a router parameter bound
+ * that lets the supplied identifier reach the route — the error contract's one installation, and the
+ * two route modules that together register the six routes under `/api`. It constructs nothing else —
+ * no database, no repository, no clock —
  * because the composed use cases it drives are handed to it, and it does not listen, because choosing
  * the address and binding the socket is the entry point's job. That is what lets the whole surface,
  * failure paths included, be driven in-process through `app.inject()`.
@@ -17,7 +18,7 @@
  */
 import Fastify, { LogController, type FastifyInstance } from 'fastify';
 
-import { answerWithErrorContract, installErrorHandling } from './errorMapper.js';
+import { answerTransportError, answerWithErrorContract, installErrorHandling } from './errorMapper.js';
 import { registerHealthRoutes } from './healthRoutes.js';
 import type { AppDependencies } from './taskRoutes.js';
 import { registerTaskRoutes } from './taskRoutes.js';
@@ -63,8 +64,9 @@ const MAX_PATH_PARAMETER_LENGTH = 16 * 1024;
  * Registration order is deliberate: the error handler and the not-found handler are installed
  * before any route, so every route registered into the same encapsulation context is answered
  * through the one mapping in `errorMapper.ts` — the 400 a rejected field produces, the 404 an
- * identifier that matches no task produces, and the 500 a storage failure becomes. Neither handler
- * is installed anywhere else, in this file or in any other.
+ * identifier that matches no task produces, and the 500 a storage failure becomes — and the failures
+ * the framework and the transport answer before a route is matched take that same mapping. Neither
+ * handler is installed anywhere else, in this file or in any other.
  *
  * The returned instance is not listening. The caller decides when and where it listens, which is
  * what keeps the factory synchronous and the routes testable without a socket.
@@ -95,8 +97,16 @@ export function buildApp(deps: AppDependencies, options: BuildAppOptions): Fasti
     // Two failures the framework otherwise answers itself, without ever reaching the error handler: a
     // path it cannot percent-decode and a path parameter past the router's limit. Handing both to the
     // contract's one writer is what keeps their responses in the contract's envelope instead of the
-    // framework's default error shape.
+    // framework's default error shape. The transport's own request-line failures are handed over the
+    // same way, through the socket handler below.
     frameworkErrors: answerWithErrorContract,
+
+    // A request line or header block past Node's own limit, or a request that times out mid-flight, is
+    // reported on the socket and never becomes a request at all: it reaches neither a route nor the
+    // error handler nor the framework-error channel above. Handing those failures to the error
+    // contract's own writer, which states the envelope on the socket itself, is what keeps a refused
+    // request under the same contract instead of the framework's default error shape.
+    clientErrorHandler: answerTransportError,
 
     // The router's own limit would refuse a long identifier before any route saw it. Stating it here
     // is what lets the identifier be accepted as supplied and answered as a missing task.

@@ -130,6 +130,17 @@ function toTask(row: TaskRow): Task {
 }
 
 /**
+ * Maps the entity's boolean to the table's stored 0/1 integer. This is the single write-direction
+ * conversion, the counterpart of {@link toTask}, which is the single read direction: `insert` and
+ * `update` both call it, so a later change to the stored representation — another integer, or a
+ * different column type altogether — is made here once rather than at each statement that writes
+ * the column.
+ */
+function toStoredCompleted(completed: boolean): 0 | 1 {
+  return completed ? 1 : 0;
+}
+
+/**
  * Stores tasks in the SQLite `tasks` table, satisfying {@link TaskRepository} exactly: the five
  * promise-returning members, no filtering, no ordering and no rule re-checked.
  *
@@ -147,8 +158,9 @@ function toTask(row: TaskRow): Task {
  * The members are `async` although the driver is synchronous, and must stay that way: the body
  * still runs at the call, while a driver failure becomes a rejection instead of a synchronous
  * throw escaping a member whose signature promises a promise. The port's shared conformance suite
- * asserts exactly that with `insert(...).catch(...)`, and the in-memory implementation behaves the
- * same way, so the two stores stay observably identical.
+ * asserts exactly that: it expects a repeated `insert` to reject through its promise rather than
+ * throw synchronously, and the in-memory implementation behaves the same way, so the two stores
+ * stay observably identical.
  */
 export class SqliteTaskRepository implements TaskRepository {
   /** The open handle every prepared statement below runs against. */
@@ -187,7 +199,7 @@ export class SqliteTaskRepository implements TaskRepository {
       task.description,
       task.priority,
       task.dueDate,
-      task.completed ? 1 : 0,
+      toStoredCompleted(task.completed),
       task.createdAt,
       task.updatedAt,
     );
@@ -222,7 +234,7 @@ export class SqliteTaskRepository implements TaskRepository {
       task.description,
       task.priority,
       task.dueDate,
-      task.completed ? 1 : 0,
+      toStoredCompleted(task.completed),
       task.updatedAt,
       task.id,
     );

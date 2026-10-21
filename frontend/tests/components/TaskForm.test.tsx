@@ -2,9 +2,10 @@
  * Component suite for the task form, `TaskForm` in `src/components/TaskForm.tsx`.
  *
  * One component serves both jobs the product needs — creating a task and editing one — so the suite
- * covers both modes: the create form's defaults and the three checks it makes before a request is
- * sent, the way a rejected save is displayed, the in-flight state that stops a double submit, and the
- * edit form's prefill, its dirty check, its partial patch and its Cancel.
+ * covers both modes: the create form's defaults and the four checks it makes before a request is
+ * sent, the way a rejected save is displayed, the refusal that keeps two submits dispatched inside one
+ * browser task to a single request, the in-flight state that stops a double submit, and the edit
+ * form's prefill, its dirty check, its partial patch and its Cancel.
  *
  * Every assertion goes through a query a user could perform: a control by its label, a message by its
  * text, and the association between the two through `aria-invalid` and `aria-describedby`. No case
@@ -21,7 +22,7 @@
  * of AAP 0.6.2 and the accessible structure of AAP 0.6.5.
  */
 
-import { act, waitFor } from '@testing-library/react';
+import { act, fireEvent, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 
 import type { CreateTaskInput, Task, UpdateTaskInput } from '../../src/api/types';
@@ -39,6 +40,15 @@ const CREATE_LABEL = 'Add task';
 
 /** The label of an edit form's submit control. */
 const EDIT_LABEL = 'Save';
+
+/**
+ * The form's two modes with the label each one's submit control carries. The due-date cases run in
+ * both, and the mode is the only thing they vary.
+ */
+const FORM_MODES = [
+  { mode: 'create', submitLabel: CREATE_LABEL },
+  { mode: 'edit', submitLabel: EDIT_LABEL },
+];
 
 /** The title the edit-mode cases start from. */
 const EDIT_TASK_TITLE = 'Buy milk';
@@ -131,6 +141,50 @@ function renderEditForm(onSubmit: SubmitHandler, onCancel?: () => void) {
       submitLabel={EDIT_LABEL}
     />,
   );
+}
+
+/**
+ * Puts the due-date control into the state a browser reports for a date it cannot represent — the
+ * state `02302026` typed into its segments produces, where the control displays `02/30/2026` while
+ * its own `value` is `''` and `validity.badInput` is `true`.
+ *
+ * jsdom implements neither those segments nor their validation: assigning `02/30/2026` sanitizes the
+ * value to `''` and every control it builds reports `badInput: false`, so no keystroke and no
+ * assignment can reach that state here. The one thing the form reads about it — the control's own
+ * `validity` — is therefore shadowed with one that reports it.
+ *
+ * @param dueDate - The due-date control to shadow.
+ */
+function reportDueDateUnrepresentable(dueDate: HTMLElement): void {
+  Object.defineProperty(dueDate, 'validity', { configurable: true, value: { badInput: true } });
+}
+
+/**
+ * Reports the due-date control as holding no value of its own while recording every assignment made
+ * to that value, which is what lets a case tell whether the form wrote to the control itself.
+ *
+ * It is the state of a created form after its reset when the control could not represent the typed
+ * date: the state and the control's own `value` are both `''`, so the render writes nothing and the
+ * typed text stays on screen. React's own write is skipped here for the same reason it holds, which
+ * is why an assertion on the displayed value alone would prove nothing.
+ *
+ * @param dueDate - The due-date control to shadow.
+ * @returns The values written to the control, in the order they were written.
+ */
+function reportNoValueAndRecordWrites(dueDate: HTMLElement): string[] {
+  const writes: string[] = [];
+  const nativeValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+
+  Object.defineProperty(dueDate, 'value', {
+    configurable: true,
+    get: () => '',
+    set: (next: string) => {
+      writes.push(next);
+      nativeValue?.set?.call(dueDate, next);
+    },
+  });
+
+  return writes;
 }
 
 describe('TaskForm — fields and create-mode defaults', () => {
@@ -323,6 +377,77 @@ describe('TaskForm — checks made before a request is sent', () => {
       expect(control).toHaveValue(text);
     },
   );
+});
+
+describe('TaskForm — a due date the browser cannot represent', () => {
+  it.each(FORM_MODES)(
+    'refuses a $mode submit with the server message, links it to the field and sends nothing',
+    async ({ mode, submitLabel }) => {
+      const user = userEvent.setup();
+      const onSubmit = succeedingSubmit();
+
+      if (mode === 'create') {
+        renderCreateForm(onSubmit);
+        await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Buy milk');
+      } else {
+        renderEditForm(onSubmit, cancelMock());
+      }
+
+      const dueDate = screen.getByLabelText('Due date');
+      const submit = screen.getByRole('button', { name: submitLabel });
+
+      if (mode === 'edit') {
+        // The change events that accompany the typing carry an empty value, which is what makes an
+        // edit see a difference from the stored date — and enable Save — at all.
+        fireEvent.input(dueDate, { target: { value: '' } });
+        expect(submit).toBeEnabled();
+      }
+
+      reportDueDateUnrepresentable(dueDate);
+
+      await user.click(submit);
+
+      // Nothing travels: a date that cannot be represented is no due date to drop, and on the edit
+      // path its empty value is not "the user cleared the stored date" either, so the stored one
+      // survives and the form stays open for the user to correct the field.
+      expect(onSubmit).not.toHaveBeenCalled();
+
+      const message = await screen.findByText('Due date must be a valid calendar date');
+
+      expect(dueDate).toHaveAttribute('aria-invalid', 'true');
+      expect(dueDate).toHaveAccessibleDescription('Due date must be a valid calendar date');
+      expect(dueDate.getAttribute('aria-describedby')).toBe(message.id);
+      expect(screen.getByRole('button', { name: submitLabel })).toBeEnabled();
+    },
+  );
+
+  it('clears the due-date control itself on a successful create instead of leaving that to the render', async () => {
+    const user = userEvent.setup();
+    renderCreateForm(succeedingSubmit());
+
+    const title = screen.getByRole('textbox', { name: 'Title' });
+    const dueDate = screen.getByLabelText('Due date');
+
+    await user.type(title, 'Buy milk');
+    // The typing that produced the unrepresentable date reached the form the way the browser
+    // delivers it: as a change carrying the empty value it reports for that date. The form's own
+    // due-date value is therefore empty already when the reset runs, which is why the reset cannot
+    // clear what the control displays through the render.
+    fireEvent.input(dueDate, { target: { value: '' } });
+
+    const writes = reportNoValueAndRecordWrites(dueDate);
+
+    await user.click(screen.getByRole('button', { name: CREATE_LABEL }));
+
+    await waitFor(() => {
+      expect(title).toHaveValue('');
+    });
+
+    // The control reports no value of its own in that state, so the empty state the form resets to
+    // matches it and React's render writes nothing; only a direct assignment clears what the control
+    // displays, which is what this records.
+    expect(writes).toContain('');
+  });
 });
 
 describe('TaskForm — a save the server rejected', () => {
@@ -631,6 +756,35 @@ describe('TaskForm — the submit lifecycle', () => {
     });
     expect(submit).toHaveAttribute('aria-busy', 'false');
     expect(title).toHaveValue('');
+  });
+
+  it('takes one submit when two are dispatched inside the same browser task', async () => {
+    const user = userEvent.setup();
+    const deferred = createDeferred();
+    const onSubmit = submitMock().mockReturnValue(deferred.promise);
+    renderCreateForm(onSubmit);
+
+    const title = screen.getByRole('textbox', { name: 'Title' });
+    const submit = screen.getByRole('button', { name: CREATE_LABEL });
+
+    await user.type(title, 'Buy milk');
+
+    // Both submits are dispatched back to back, before React has flushed the state the first one set.
+    // The disabled control above is not yet on screen at that moment, so the refusal the second submit
+    // meets has to be the synchronous one: two passed submits would each create a task of their own.
+    await act(async () => {
+      submit.click();
+      submit.click();
+    });
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      deferred.resolve(true);
+      await deferred.promise;
+    });
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 
   it('keeps what the user typed when the form is re-rendered with new props', async () => {

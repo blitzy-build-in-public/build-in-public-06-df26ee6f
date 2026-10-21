@@ -13,12 +13,14 @@
  *
  * What it asserts is exactly what the port promises: a store starts empty; a task round-trips
  * through `insert` and `findById` with every field's own kind intact; `findAll` lists every
- * stored task once and in no particular order; reads hand out copies rather than aliases;
- * `update` and `delete` report whether a record really matched instead of upserting one into
- * existence; a deleted record stays deleted; and a repeated `insert` cannot overwrite what is
- * already stored. Field rules, defaults, normalisation and their messages are the domain's and
- * are asserted by the domain and HTTP suites — duplicating any of them here would freeze an
- * adapter against a rule it does not own.
+ * stored task once and in no particular order; an implementation neither mutates a task it was
+ * handed nor hands out aliases to stored state, so mutating a task after reading it or after
+ * passing it in cannot change what is stored; `update` and `delete` report whether a record
+ * really matched instead of upserting one into existence; a deleted record stays deleted; and a
+ * repeated `insert` is refused as an error rather than overwriting what is already stored. Field
+ * rules, defaults, normalisation and their messages are the domain's and are asserted by the
+ * domain and HTTP suites — duplicating any of them here would freeze an adapter against a rule it
+ * does not own.
  *
  * This is a suite module, not a test file: its name carries no `.test` suffix and it registers
  * nothing at import time, so the runner never collects it directly and every hook and every test
@@ -201,7 +203,7 @@ export function describeTaskRepositoryContract(options: TaskRepositoryContractOp
       expect(new Set(idsOf(tasks)).size).toBe(tasks.length);
     });
 
-    it('hands out copies, so mutating a returned task or array cannot change what is stored', async () => {
+    it('hands out copies and keeps none, so mutating a task after reading it or after passing it in cannot change what is stored', async () => {
       const task = makeTask({ id: 'task-copies' });
 
       await store().insert(task);
@@ -218,6 +220,64 @@ export function describeTaskRepositoryContract(options: TaskRepositoryContractOp
 
       expect(relisted.length).toBe(1);
       expect(relisted).toStrictEqual([task]);
+
+      // The passed-in half of the clause, through `insert`: the object the caller handed in is
+      // mutated afterwards, and so is the array the caller built around it, so a store that kept
+      // either would show the mutation here. Both comparisons below are against a fresh literal
+      // carrying the values that crossed the port — never against the object that is mutated on
+      // purpose.
+      const insertHandedIn = makeTask({ id: 'task-passed-in', title: 'Handed in for insert' });
+      const insertContainer: Task[] = [insertHandedIn];
+
+      await store().insert(insertHandedIn);
+
+      Object.assign(insertHandedIn, {
+        title: 'mutated after insert',
+        description: 'mutated after insert',
+        dueDate: '2026-12-31',
+        completed: true,
+      });
+      insertContainer[0] = makeTask({ id: 'task-replacing-the-passed-in-one' });
+      insertContainer.push(makeTask({ id: 'task-appended-after-insert' }));
+
+      expect(await readStored(store(), 'task-passed-in')).toStrictEqual(
+        makeTask({ id: 'task-passed-in', title: 'Handed in for insert' }),
+      );
+
+      // The same half through `update`, where the whole replacement entity is handed in: mutating
+      // that object and its container afterwards must leave the stored record holding the values
+      // that were handed in rather than the mutated ones.
+      const updateOriginal = makeTask({ id: 'task-passed-in-update', title: 'Before the update' });
+
+      await store().insert(updateOriginal);
+
+      const updateHandedIn = makeTask({
+        id: 'task-passed-in-update',
+        title: 'Handed in for update',
+        completed: true,
+        updatedAt: UPDATED_AT,
+      });
+      const updateContainer: Task[] = [updateHandedIn];
+
+      expect(await store().update(updateHandedIn)).toBe(true);
+
+      Object.assign(updateHandedIn, {
+        title: 'mutated after update',
+        description: 'mutated after update',
+        dueDate: '2026-11-30',
+        completed: false,
+      });
+      updateContainer[0] = makeTask({ id: 'task-replacing-the-updated-one' });
+      updateContainer.push(makeTask({ id: 'task-appended-after-update' }));
+
+      expect(await readStored(store(), 'task-passed-in-update')).toStrictEqual(
+        makeTask({
+          id: 'task-passed-in-update',
+          title: 'Handed in for update',
+          completed: true,
+          updatedAt: UPDATED_AT,
+        }),
+      );
     });
 
     it('replaces the stored task when update matches a record, and reports that it did', async () => {
@@ -292,15 +352,16 @@ export function describeTaskRepositoryContract(options: TaskRepositoryContractOp
       expect(await store().findAll()).toStrictEqual([]);
     });
 
-    it('leaves the stored record untouched when insert is repeated with the same identifier', async () => {
+    it('refuses a repeated insert and leaves the stored record untouched', async () => {
       const original = makeTask({ id: 'task-duplicate', title: 'The stored title' });
       const duplicate = makeTask({ id: original.id, title: 'A second title for one identifier' });
 
       await store().insert(original);
 
-      // An implementation may refuse the duplicate outright or ignore it; the port requires only
-      // that the first record survives, so either outcome is accepted here rather than pinned.
-      await store().insert(duplicate).catch(() => undefined);
+      // The port fixes that a repeated identifier is an error, not the message that carries it, so
+      // the refusal is asserted without one: each implementation rejects with its own error, and
+      // the first record must survive it untouched.
+      await expect(store().insert(duplicate)).rejects.toThrow();
 
       expect(await readStored(store(), original.id)).toStrictEqual(original);
       expect(await store().findAll()).toStrictEqual([original]);
