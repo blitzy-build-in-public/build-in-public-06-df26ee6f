@@ -1778,23 +1778,69 @@ describe('task routes (composed application): the served surface', () => {
     await releaseForTest();
   });
 
-  it('answers a path that cannot be percent-decoded with the contract 400, not the framework body', async () => {
-    // The router hands a path it cannot decode to the factory's own framework error handler rather
-    // than answering it itself, so the failure arrives through the one mapping like every other.
-    const { response, body } = await rejectedRequest(
-      api(),
-      () => request(api(), 'GET', '/api/tasks/%zz'),
-      400,
-    );
+  /**
+   * The two failures the router reports before a route is matched.
+   *
+   * Both are handed to the factory's own framework error handler rather than answered by the router,
+   * so both arrive through the one mapping like every other failure — and both are answered on a reply
+   * the framework builds on its own pre-route context, which no application hook is registered on, so
+   * the hardening policy every response carries is stated for them by the error contract's writer
+   * rather than by the factory's response hook.
+   */
+  interface PreRouteFailureCase {
+    /** The failure, named as the case title reads it. */
+    readonly label: string;
+    /** The path that triggers it. */
+    readonly url: string;
+    /** The status the contract answers it with. */
+    readonly statusCode: number;
+    /** The framework's own code and wording, neither of which may ride along beside the envelope. */
+    readonly forbiddenFragments: readonly string[];
+  }
 
-    expect(body.error.code).toBe('VALIDATION_ERROR');
-    expect(body.error.fields).toEqual({});
-    expect(body.error.message).toBe(VALIDATION_ERROR_MESSAGE);
-    // The framework's own code and its own wording are internal detail: the mapping keeps the status
-    // and the failure class, and nothing else about the failure reaches the client.
-    expect(response.body).not.toContain('FST_ERR_BAD_URL');
-    expect(response.body).not.toContain('is not a valid url component');
-  });
+  const PRE_ROUTE_FAILURE_CASES: readonly PreRouteFailureCase[] = [
+    {
+      label: 'a path that cannot be percent-decoded',
+      url: '/api/tasks/%zz',
+      statusCode: 400,
+      forbiddenFragments: ['FST_ERR_BAD_URL', 'is not a valid url component'],
+    },
+    {
+      // A parameter past the router's own bound. The injector runs a request through the router
+      // without a transport, so this one reaches the router and is refused there; the identical
+      // request line over a real socket is refused by the transport as 431 before any router sees it,
+      // which is the case below.
+      label: 'a path parameter past the router parameter bound',
+      url: `/api/tasks/${'a'.repeat(20_000)}`,
+      statusCode: 414,
+      forbiddenFragments: ['FST_ERR_MAX_PARAM_LENGTH', 'is exceeding the max param length'],
+    },
+  ];
+
+  it.each(PRE_ROUTE_FAILURE_CASES)(
+    'answers $label with the contract $statusCode, not the framework body',
+    async (testCase: PreRouteFailureCase) => {
+      const { response, body } = await rejectedRequest(
+        api(),
+        () => request(api(), 'GET', testCase.url),
+        testCase.statusCode,
+      );
+
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+      expect(body.error.fields).toEqual({});
+      expect(body.error.message).toBe(VALIDATION_ERROR_MESSAGE);
+      // The hardening policy every API response carries, asserted on both of these replies because
+      // the factory's response hook never sees them: each is built before the route context exists.
+      expect(headerValue(response, 'x-content-type-options')).toBe('nosniff');
+      expect(headerValue(response, 'x-frame-options')).toBe('DENY');
+      expect(headerValue(response, 'cache-control')).toBe('no-store');
+      // The framework's own code and its own wording are internal detail: the mapping keeps the status
+      // and the failure class, and nothing else about the failure reaches the client.
+      for (const fragment of testCase.forbiddenFragments) {
+        expect(response.body).not.toContain(fragment);
+      }
+    },
+  );
 
   it('answers an over-long request line with the contract 431, not the framework body', async () => {
     // A request line past Node's own limit is refused by the transport before it becomes a request, so

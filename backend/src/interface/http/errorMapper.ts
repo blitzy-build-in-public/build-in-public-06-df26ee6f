@@ -63,6 +63,25 @@ export const MALFORMED_BODY_MESSAGE = 'Request body must be a valid JSON object'
  */
 export const INTERNAL_ERROR_MESSAGE = 'Internal server error';
 
+/**
+ * The security-hardening headers every response of this API carries, stated once for every emitter.
+ *
+ * The API answers JSON under a content type it states itself, binds loopback, returns no credential
+ * and holds no state a browser would read across origins, so this is hardening rather than a remedy
+ * for a demonstrated exposure: `nosniff` stops a browser from second-guessing the declared media
+ * type, `DENY` refuses to let any document frame a response at all, and `no-store` keeps a response
+ * carrying the user's own task data out of every cache along the way. It is declared here because
+ * this module also owns the writers for the two failures that never reach a route — the reply the
+ * framework builds before any route context exists, and the socket a refused request is answered on,
+ * in each case where the factory's response hook cannot reach — so every emitter reads this one list
+ * instead of each stating the policy.
+ */
+export const RESPONSE_HARDENING_HEADERS = [
+  ['X-Content-Type-Options', 'nosniff'],
+  ['X-Frame-Options', 'DENY'],
+  ['Cache-Control', 'no-store'],
+] as const;
+
 /** Builds the envelope, so its three keys exist in one order on every failure path. */
 function envelope(
   code: ApiErrorCode,
@@ -195,8 +214,8 @@ export function notFoundBody(request: FastifyRequest): ApiErrorBody {
  *
  * A failure that maps to a 5xx is logged at error level through the request logger, carrying the error
  * itself and the context of the request it failed on — which is what the framework's own per-request
- * records used to supply, and which the factory switches off because nothing may log on the success
- * path. A 4xx is an expected outcome and is not logged.
+ * records would otherwise supply, and which the factory switches off because nothing may log on the
+ * success path. A 4xx is an expected outcome and is not logged.
  */
 export function answerWithErrorContract(
   error: unknown,
@@ -210,6 +229,15 @@ export function answerWithErrorContract(
       'Unexpected error handling request',
     );
   }
+
+  // The hardening policy is stated on the reply as well as by the factory's response hook, because
+  // the framework answers two of the failures handed to this writer — a path it cannot percent-decode
+  // and a parameter past the router's limit — on a reply it builds before the route context exists,
+  // where that hook's chain never runs. Reading the one list keeps the emitters from stating it twice.
+  for (const [name, value] of RESPONSE_HARDENING_HEADERS) {
+    reply.header(name, value);
+  }
+
   reply.status(statusCode).send(body);
 }
 
@@ -237,10 +265,17 @@ export function answerTransportError(error: ConnectionError, socket: Socket): vo
 
   const { statusCode, body } = mapTransportFailure(error.code);
   const payload = JSON.stringify(body);
+  // The hardening policy is stated on the socket as well as by the factory's response hook: a request
+  // the transport refused never becomes a request, so no hook runs for it and this head is the only
+  // place that response can be shaped.
+  const hardeningHeaders = RESPONSE_HARDENING_HEADERS.map(
+    ([name, value]) => `${name}: ${value}\r\n`,
+  ).join('');
   const head =
     `HTTP/1.1 ${statusCode} ${STATUS_CODES[statusCode] ?? 'Error'}\r\n` +
     `Content-Length: ${Buffer.byteLength(payload)}\r\n` +
     'Content-Type: application/json; charset=utf-8\r\n' +
+    hardeningHeaders +
     'Connection: close\r\n' +
     '\r\n';
 

@@ -5,11 +5,11 @@
  * logger at the configured level with the five framework behaviours this product depends on stated
  * rather than inherited — no per-request logging, no HEAD twins, the framework's error paths and the
  * transport's own request-line failures handed to the error contract, and a router parameter bound
- * that lets the supplied identifier reach the route — the error contract's one installation, and the
- * two route modules that together register the six routes under `/api`. It constructs nothing else —
- * no database, no repository, no clock —
- * because the composed use cases it drives are handed to it, and it does not listen, because choosing
- * the address and binding the socket is the entry point's job. That is what lets the whole surface,
+ * that lets the supplied identifier reach the route — the error contract's one installation, the
+ * response-header policy every response carries, and the two route modules that together register the
+ * six routes under `/api`. It constructs nothing else — no database, no repository, no clock — because
+ * the composed use cases it drives are handed to it, and it does not listen, because choosing the
+ * address and binding the socket is the entry point's job. That is what lets the whole surface,
  * failure paths included, be driven in-process through `app.inject()`.
  *
  * Layering: the HTTP interface layer. It imports the two sibling route modules and the error
@@ -18,7 +18,12 @@
  */
 import Fastify, { LogController, type FastifyInstance } from 'fastify';
 
-import { answerTransportError, answerWithErrorContract, installErrorHandling } from './errorMapper.js';
+import {
+  RESPONSE_HARDENING_HEADERS,
+  answerTransportError,
+  answerWithErrorContract,
+  installErrorHandling,
+} from './errorMapper.js';
 import { registerHealthRoutes } from './healthRoutes.js';
 import type { AppDependencies } from './taskRoutes.js';
 import { registerTaskRoutes } from './taskRoutes.js';
@@ -111,6 +116,23 @@ export function buildApp(deps: AppDependencies, options: BuildAppOptions): Fasti
     // The router's own limit would refuse a long identifier before any route saw it. Stating it here
     // is what lets the identifier be accepted as supplied and answered as a missing task.
     routerOptions: { maxParamLength: MAX_PATH_PARAMETER_LENGTH },
+  });
+
+  // The hardening policy is applied here, once, rather than per route: one hook covers every response
+  // the router dispatches — the six routes, the not-found answer, every failure the error contract
+  // shapes — so a route added later cannot answer without it. The two failures the framework answers
+  // before a route is matched, a path it cannot percent-decode and a parameter past the router's
+  // limit, never reach this hook, and neither does a request the transport refuses: the error
+  // contract's own writer states the same list for them, from `RESPONSE_HARDENING_HEADERS`, on the
+  // reply the framework built and on the socket the refused request arrived on.
+  app.addHook('onSend', async (_request, reply, payload) => {
+    for (const [name, value] of RESPONSE_HARDENING_HEADERS) {
+      reply.header(name, value);
+    }
+
+    // The payload is returned unchanged: this hook states headers and decides nothing about the
+    // body or the status the route, the mapper or the not-found handler has already chosen.
+    return payload;
   });
 
   // Before the routes: both handlers must already be in place for everything registered below.
