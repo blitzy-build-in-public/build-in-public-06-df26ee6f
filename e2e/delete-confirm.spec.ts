@@ -1,0 +1,396 @@
+/**
+ * End-to-end coverage for deletion behind its confirmation — AAP acceptance criterion 3.
+ *
+ * What it proves in the running product: the Delete control opens a confirmation naming the task
+ * and changes nothing by itself, cancelling and pressing Escape both leave the task in place and on
+ * the server, confirming removes it for good — the removal survives a reload — and a repeat
+ * `DELETE /api/tasks/:id` answers 404.
+ *
+ * The other 404 the criterion meets is the one an action finds when the task is already gone from
+ * the server: that test drives it through the interface and asserts the notice region reaches the
+ * screen, because the region and the state that feeds it are owned by different modules.
+ *
+ * The criterion is not "delete works" but "delete is impossible without the confirmation", so every
+ * path that dismisses the dialog asserts that the task survives on the screen and on the server.
+ * Cancelling and pressing Escape are two tests rather than one: they are two separate ways out of
+ * the dialog, and neither of them may delete.
+ *
+ * The store is shared with every other spec — one SQLite file, one worker — so each test clears it
+ * through `e2e/support/api.ts` before it asserts, and every path stays relative so it resolves
+ * against `use.baseURL` (the Vite origin) and travels the `/api` proxy.
+ */
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type Locator,
+  type Page,
+} from '@playwright/test';
+
+import {
+  clearAllTasks,
+  createTask,
+  deleteTask,
+  getTaskResponse,
+  isApiErrorBody,
+  listTasks,
+  type TaskDto,
+} from './support/api';
+
+/** The task the confirmation is opened on, and the only task any test in this file deletes. */
+const DOOMED_TITLE = 'Delete me';
+
+/**
+ * The task that has to survive every dismissal. Seeding it is what turns "the task is still there"
+ * into "only the confirmed task went" — which a store holding a single task cannot show.
+ */
+const KEEPER_TITLE = 'Keep me';
+
+/** The heading `TaskItem` gives the confirmation, and therefore the dialog's accessible name. */
+const CONFIRM_DIALOG_NAME = 'Delete task';
+
+/**
+ * The sentence the notice region shows once an action found its task already gone from the server.
+ *
+ * It is written out here rather than imported from the state layer: this file talks to the
+ * application over HTTP alone, through `e2e/support/api.ts`, so the interface's own rendering is
+ * what proves the outcome reached the screen.
+ */
+const MISSING_TASK_NOTICE = 'That task no longer exists.';
+
+/**
+ * The one list item whose text contains `title`.
+ *
+ * The item's own actions are addressed with an anchored name pattern — `/^Delete/`, `/^Edit/` — and
+ * not with the bare words: each control is named for the task it acts on (`Delete “<title>”`), and
+ * Playwright's name match is a substring one, so `'Delete'` would also answer with the item's Edit
+ * control whenever the task's title contains the word.
+ */
+function item(page: Page, title: string): Locator {
+  return page.getByRole('listitem').filter({ hasText: title });
+}
+
+/**
+ * The delete confirmation.
+ *
+ * Every control inside the dialog is queried through this locator rather than from the page. Each
+ * item carries its own `Delete` control, so an unscoped `page.getByRole('button', { name: 'Delete' })`
+ * matches the item's control and the dialog's at once and fails on a strict-mode violation instead
+ * of answering the question the test meant to ask.
+ */
+function confirmDialog(page: Page): Locator {
+  return page.getByRole('dialog', { name: CONFIRM_DIALOG_NAME });
+}
+
+test.describe('delete with a confirmation', () => {
+  test.beforeEach(async ({ request }) => {
+    await clearAllTasks(request);
+  });
+
+  test('cancelling the confirmation keeps the task and returns focus to its Delete control', async ({
+    page,
+    request,
+  }) => {
+    await seedTasks(request);
+    await page.goto('/');
+
+    const doomed = item(page, DOOMED_TITLE);
+    const keeper = item(page, KEEPER_TITLE);
+    await expect(doomed).toBeVisible();
+    await expect(keeper).toBeVisible();
+
+    // The item's own Delete control only opens the confirmation: the request it is about to make is
+    // issued by the dialog's confirm control and by nothing else.
+    const deleteControl = doomed.getByRole('button', { name: /^Delete/ });
+    await deleteControl.click();
+
+    const dialog = confirmDialog(page);
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText(DOOMED_TITLE);
+
+    // Opening the modal moved focus into it, so a keyboard user reaches both choices without
+    // tabbing through the page behind it. Polled rather than read once, so the assertion waits for
+    // the focus the browser places rather than depending on the click having resolved after it.
+    await expect
+      .poll(() => dialog.evaluate((element) => element.contains(document.activeElement)))
+      .toBe(true);
+
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
+
+    // Nothing changed by the dismissal: both items are still listed and the server still holds both
+    // tasks, so the task survived rather than merely looking as if it had.
+    await expect(doomed).toBeVisible();
+    await expect(keeper).toBeVisible();
+    expect(await listTasks(request)).toHaveLength(2);
+
+    // Focus came back to the control that opened the dialog, so the keyboard user resumes where
+    // they were instead of at the start of the page.
+    await expect(deleteControl).toBeFocused();
+  });
+
+  test('pressing Escape dismisses the confirmation without deleting', async ({ page, request }) => {
+    const seeded = await seedTasks(request);
+    await page.goto('/');
+
+    const doomed = item(page, DOOMED_TITLE);
+    const deleteControl = doomed.getByRole('button', { name: /^Delete/ });
+
+    // Opened from the keyboard: focusing the control and pressing Enter is the whole path, with no
+    // pointer involved.
+    await deleteControl.focus();
+    await page.keyboard.press('Enter');
+
+    const dialog = confirmDialog(page);
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText(DOOMED_TITLE);
+
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+
+    // Escape dismisses exactly as Cancel does: both tasks stay on the screen and on the server.
+    await expect(doomed).toBeVisible();
+    await expect(item(page, KEEPER_TITLE)).toBeVisible();
+
+    const survivors = (await listTasks(request)).map((task) => task.id);
+    expect(survivors).toHaveLength(2);
+    expect(survivors).toContain(seeded.doomed.id);
+    expect(survivors).toContain(seeded.keeper.id);
+  });
+
+  test('confirming removes the task for good, and a repeat DELETE answers 404', async ({
+    page,
+    request,
+  }) => {
+    const seeded = await seedTasks(request);
+    await page.goto('/');
+
+    const doomed = item(page, DOOMED_TITLE);
+    // The task to delete carries a non-default priority, so its item shows a priority word as well
+    // as its title — and the confirmed delete below takes the whole item away, tag included.
+    await expect(doomed).toContainText('High');
+    await doomed.getByRole('button', { name: /^Delete/ }).click();
+
+    const dialog = confirmDialog(page);
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: 'Delete' }).click();
+
+    // Gone from the screen, and only it: the task that was never confirmed is still listed.
+    await expect(doomed).toHaveCount(0);
+    await expect(item(page, KEEPER_TITLE)).toBeVisible();
+
+    const remaining = await listTasks(request);
+    expect(remaining.map((task) => task.id)).toEqual([seeded.keeper.id]);
+
+    // Removed from the store rather than filtered off the screen: a reload refetches the list from
+    // the server with nothing of the page's own carried over, and the task is still absent.
+    await page.reload();
+    await expect(item(page, DOOMED_TITLE)).toHaveCount(0);
+    await expect(item(page, KEEPER_TITLE)).toBeVisible();
+    expect(await listTasks(request)).toHaveLength(1);
+
+    // And gone for good: the repeat delete answers 404 rather than a second 204.
+    expect(await deleteTask(request, seeded.doomed.id)).toBe(404);
+
+    // The 404 is the contract's error envelope: the code is machine-readable and the field map is
+    // present and empty, because a missing task belongs to no field of the request.
+    const read = await getTaskResponse(request, seeded.doomed.id);
+    expect(read.status).toBe(404);
+    if (!isApiErrorBody(read.body)) {
+      throw new Error(`Expected task ${seeded.doomed.id} to be missing, received a task body.`);
+    }
+    expect(read.body.error.code).toBe('NOT_FOUND');
+    expect(read.body.error.fields).toEqual({});
+  });
+
+  test("a task deleted behind the interface's back leaves the list and shows the notice", async ({
+    page,
+    request,
+  }) => {
+    const seeded = await seedTasks(request);
+    await page.goto('/');
+
+    const doomed = item(page, DOOMED_TITLE);
+    await expect(doomed).toBeVisible();
+
+    // Deleted through the request fixture, behind the page's back: the 204 is the setup's own proof,
+    // and the item stays on the screen because the page still holds the copy its own list request
+    // returned. That stale copy is what an action faces when another reader deleted the task first,
+    // and it is what the checkbox below acts on.
+    expect(await deleteTask(request, seeded.doomed.id)).toBe(204);
+    await expect(doomed).toBeVisible();
+
+    // The row's own checkbox: every item carries one, so an unscoped `getByRole('checkbox')` would
+    // match both rows and fail on a strict-mode violation instead of asking the question the test
+    // meant to ask. Clicking it sends `PATCH` for a task the server no longer holds, which answers
+    // 404 — the failure the interface has to report rather than swallow.
+    await doomed.getByRole('checkbox').click();
+
+    // The notice region, owned by the composition and rendered above the list as a polite status:
+    // located by the sentence it carries rather than by its position, because the loading region is
+    // a status region too and both can be on the page at once.
+    const notice = page.getByRole('status').filter({ hasText: MISSING_TASK_NOTICE });
+    await expect(notice).toBeVisible();
+    await expect(notice).toHaveText(MISSING_TASK_NOTICE);
+    await expect(notice).toHaveAttribute('aria-live', 'polite');
+
+    // The stale item left the list and the task no action named is still listed, on the screen and
+    // in the store the server holds: the notice reports the vanished task rather than standing in
+    // for a list the interface emptied.
+    await expect(doomed).toHaveCount(0);
+    await expect(item(page, KEEPER_TITLE)).toBeVisible();
+    expect((await listTasks(request)).map((task) => task.id)).toEqual([seeded.keeper.id]);
+  });
+
+  test("Tab cycles between the confirmation's controls and never leaves the dialog", async ({
+    page,
+    request,
+  }) => {
+    await seedTasks(request);
+    await page.goto('/');
+
+    const doomed = item(page, DOOMED_TITLE);
+    await doomed.getByRole('button', { name: /^Delete/ }).click();
+
+    const dialog = confirmDialog(page);
+    await expect(dialog).toBeVisible();
+
+    // Opening the modal places focus on the dialog's first control, so a keyboard user reaches both
+    // choices without tabbing through the page behind it.
+    const cancel = dialog.getByRole('button', { name: 'Cancel' });
+    const confirm = dialog.getByRole('button', { name: 'Delete' });
+    await expect(cancel).toBeFocused();
+
+    await page.keyboard.press('Tab');
+    await expect(confirm).toBeFocused();
+
+    // Tab on the last control wraps back to the first rather than leaving the dialog for a stop on
+    // document.body, at which the dialog is no longer the active element and no focus ring is drawn.
+    await page.keyboard.press('Tab');
+    await expect(cancel).toBeFocused();
+
+    // Shift+Tab on the first control wraps to the last: the same cycle at its other end.
+    await page.keyboard.press('Shift+Tab');
+    await expect(confirm).toBeFocused();
+
+    // Both ends held: focus stayed inside the dialog through every press, and none of them dismissed
+    // it or touched the task.
+    await expect
+      .poll(() => dialog.evaluate((element) => element.contains(document.activeElement)))
+      .toBe(true);
+    await expect(dialog).toBeVisible();
+    await expect(doomed).toBeVisible();
+    expect(await listTasks(request)).toHaveLength(2);
+  });
+
+  test('the card keeps the confirmation open, and only the backdrop outside it dismisses', async ({
+    page,
+    request,
+  }) => {
+    await seedTasks(request);
+    await page.goto('/');
+
+    const doomed = item(page, DOOMED_TITLE);
+    const deleteControl = doomed.getByRole('button', { name: /^Delete/ });
+    await deleteControl.click();
+
+    const dialog = confirmDialog(page);
+    await expect(dialog).toBeVisible();
+
+    // Read from the dialog's own box rather than from a fixed point, so the two clicks below are the
+    // card's own padding and the backdrop at whatever viewport the suite runs at.
+    const box = await dialog.boundingBox();
+
+    if (box === null) {
+      throw new Error('The open confirmation reported no bounding box to click inside.');
+    }
+
+    // Inside the card, on no control: the card's left padding, eight pixels in from its edge. It
+    // dismisses nothing, which is what lets the second click of a rapid double-click on a row's
+    // Delete land on the card the first one opened without silently cancelling the confirmation.
+    await page.mouse.click(box.x + 8, box.y + box.height / 2);
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText(DOOMED_TITLE);
+    await expect(doomed).toBeVisible();
+    expect(await listTasks(request)).toHaveLength(2);
+
+    // The backdrop: half-way along the gutter the card is centred in, which is outside the card at
+    // every viewport this suite runs at.
+    await page.mouse.click(box.x / 2, box.y + box.height / 2);
+    await expect(dialog).toBeHidden();
+
+    // A backdrop dismissal is a cancellation like any other: both tasks survive it, and focus
+    // returns to the control that opened the dialog.
+    await expect(doomed).toBeVisible();
+    await expect(item(page, KEEPER_TITLE)).toBeVisible();
+    expect(await listTasks(request)).toHaveLength(2);
+    await expect(deleteControl).toBeFocused();
+  });
+
+  test("a repeated press of the gesture that opened the confirmation does not cancel it", async ({
+    page,
+    request,
+  }) => {
+    await seedTasks(request);
+    await page.goto('/');
+
+    const doomed = item(page, DOOMED_TITLE);
+    const deleteControl = doomed.getByRole('button', { name: /^Delete/ });
+
+    // The press that asks for the confirmation.
+    await deleteControl.click();
+
+    const dialog = confirmDialog(page);
+    await expect(dialog).toBeVisible();
+
+    const box = await dialog.boundingBox();
+
+    if (box === null) {
+      throw new Error('The open confirmation reported no bounding box to press outside of.');
+    }
+
+    // The press that repeats it, delivered where the pointer rests once the dialog has opened —
+    // outside the card, on the backdrop. A browser reports the second press of a rapid double-click
+    // on a row's Delete as one click whose `detail` is 2, whatever that repeat press lands on, and it
+    // must not dismiss the confirmation the press before it asked for: that silent cancellation is
+    // the behaviour this case exists to prevent. `down`/`up` carry that count; `click` would send a
+    // first press instead, which is a different gesture from the one under test.
+    await page.mouse.move(box.x / 2, box.y + box.height / 2);
+    await page.mouse.down({ clickCount: 2 });
+    await page.mouse.up({ clickCount: 2 });
+
+    await expect(page.locator('dialog[open]')).toHaveCount(1);
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText(DOOMED_TITLE);
+    await expect(doomed).toBeVisible();
+    expect(await listTasks(request)).toHaveLength(2);
+
+    // The confirmation is still whole and still dismissable: one deliberate press on the backdrop
+    // closes it without deleting, and both tasks survive.
+    await page.mouse.click(box.x / 2, box.y + box.height / 2);
+    await expect(page.locator('dialog[open]')).toHaveCount(0);
+    await expect(doomed).toBeVisible();
+    await expect(item(page, KEEPER_TITLE)).toBeVisible();
+    expect(await listTasks(request)).toHaveLength(2);
+    await expect(deleteControl).toBeFocused();
+  });
+
+});
+
+/** The two tasks every test works with: the one to delete, and the one that must survive it. */
+interface SeededTasks {
+  doomed: TaskDto;
+  keeper: TaskDto;
+}
+
+/**
+ * Seeds both tasks through the API rather than through the form: this file is about deletion, and
+ * the create route is the shortest way to a known store. The task to delete is given a non-default
+ * priority so its item is not the default shape.
+ */
+async function seedTasks(request: APIRequestContext): Promise<SeededTasks> {
+  const keeper = await createTask(request, { title: KEEPER_TITLE });
+  const doomed = await createTask(request, { title: DOOMED_TITLE, priority: 'high' });
+
+  return { doomed, keeper };
+}

@@ -1,0 +1,30 @@
+{
+  // The backend workspace's compiler configuration: the environment-specific half of the build.
+  // Everything language-level — strict mode, the ES2022 target and libraries, the interop that
+  // lets the CommonJS-typed SQLite driver be default-imported, source maps — is inherited from
+  // the shared base above; this file supplies only the module system, the resolution, the ambient
+  // types and the emit layout, and must not restate an option the base already sets.
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    // The package is an ES module ("type": "module") whose relative imports carry their ".js"
+    // extension while the file on disk is ".ts". NodeNext is what enforces that: an extensionless
+    // relative import is a compile error rather than a silent resolution miss.
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+
+    // src -> dist, so the built entry point is dist/main.js, which "npm start" runs.
+    "rootDir": "src",
+    "outDir": "dist",
+
+    // @types/node is the only ambient type package this workspace declares; it types the API
+    // surface to the Node 20 baseline the project supports rather than to the build host's runtime.
+    "types": ["node"]
+  },
+  // src alone, and that is load-bearing rather than tidy: with "rootDir": "src", adding "tests"
+  // makes tsc fail with TS6059 ("not under 'rootDir' 'src'") in both "npm run build" and
+  // "npm run typecheck", because the error is raised while the program is built; dropping
+  // "rootDir" instead would emit dist/src/main.js and break "npm start". The consequence is that
+  // backend/tests/** sits outside this program — Vitest transpiles those files and runs them, but
+  // they are not type-checked here and a type-aware lint run finds no project for them.
+  "include": ["src"]
+}

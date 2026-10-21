@@ -1,0 +1,59 @@
+/*
+ * frontend/src/components/PriorityTag.module.css
+ *
+ * Scoped styles for PriorityTag.tsx: one pill carrying the task's priority as a word.
+ *
+ * The word is the meaning and the colour only reinforces it, so the level survives a
+ * monochrome display, a colour-blind reader and a screen reader alike. Nothing here
+ * hides or re-cases the text: the label comes from taskSelectors.priorityLabel and is
+ * read as text by the component tests.
+ *
+ * The four class names below are a published contract with
+ * frontend/src/state/taskSelectors.ts: `priorityModifier(priority)` returns exactly
+ * 'low', 'medium' or 'high', and the component indexes this module with that string
+ * (`styles[priorityModifier(priority)]`), treating an undefined result as "no
+ * modifier". Rename nothing here without updating the component, and declare no class
+ * the component does not use.
+ *
+ * Every colour, space, radius and type value resolves to a custom property declared
+ * once in frontend/src/styles/global.css; no value is repeated as a literal here.
+ */
+
+/* Base shape, shared by all three levels. The muted surface and the hairline border
+   together keep the word readable on a white task card and on a muted one. */
+.tag {
+  display: inline-block;
+  /* A flex or grid parent gives its child an automatic minimum size that refuses to
+     shrink; zeroing it here is what keeps the tag from widening the page at 320px. */
+  min-inline-size: 0;
+  padding-block: var(--space-1);
+  padding-inline: var(--space-2);
+  /* A 1px hairline: global.css publishes no border-width token, and a decorative
+     border width is the one length that must not scale with the user's font size. */
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background-color: var(--color-surface-muted);
+  /* The neutral fallback for the plain form, before a level class colours the text. */
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-tight);
+  font-weight: var(--font-weight-bold);
+  /* The label is a single word: it must never break mid-word at a narrow width. */
+  white-space: nowrap;
+}
+
+/* The per-level signal, applied to text that is always present. Contrast of each
+   colour against the muted surface above: low 5.95:1, medium 5.43:1, high 5.99:1 —
+   all above the WCAG AA 4.5:1 minimum for this small text. */
+
+.low {
+  color: var(--color-priority-low);
+}
+
+.medium {
+  color: var(--color-priority-medium);
+}
+
+.high {
+  color: var(--color-priority-high);
+}

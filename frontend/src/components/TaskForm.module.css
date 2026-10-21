@@ -1,0 +1,242 @@
+/*
+ * frontend/src/components/TaskForm.module.css
+ *
+ * Scoped styles for the create/edit task form in frontend/src/components/TaskForm.tsx.
+ *
+ * Every value here is a custom property published by frontend/src/styles/global.css, so
+ * the form cannot drift from the rest of the interface and no literal colour, space,
+ * radius or font size is introduced. Only class selectors appear: an element selector in
+ * a CSS module is left unscoped and would leak into the whole document.
+ *
+ * The focus indicator belongs to global.css, whose single `:focus-visible` rule draws it from
+ * the shared focus tokens, and nothing in this file removes or hides it. The one position that
+ * rule cannot reach — the date control's internal picker indicator — gets the same ring from
+ * the rule beside the other control rules, again out of the published tokens.
+ *
+ * Layout contract (mobile-first):
+ *   base, 320px and up to 479px   one column; every field takes the full width
+ *   480px and up                  two columns, with the title and the description each
+ *                                 taking a full row, so priority and due date share one
+ *   768px and up                  spacing only; the column cap and the page gutters
+ *                                 belong to global.css
+ *
+ * Controls are capped at their container (`width`/`max-width: 100%` with `min-width: 0`)
+ * because the native date input's intrinsic width and a 200-character title are the two
+ * things that would otherwise widen the page at 320px.
+ */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface-muted);
+}
+
+.fields {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text);
+}
+
+.input,
+.textarea,
+.select {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  /* A comfortable target on a touch screen, expressed in the shared spacing scale. */
+  min-height: calc(var(--space-6) + var(--space-3));
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+}
+
+/* A control the server rejected is drawn in the danger colour, so an errored field is
+   distinguishable from a valid one by more than the message beneath it. The selector keys on
+   the attribute the component already renders (aria-invalid="true", set on all four controls in
+   TaskForm.tsx) and declares no class the component does not apply. */
+.input[aria-invalid='true'],
+.textarea[aria-invalid='true'],
+.select[aria-invalid='true'] {
+  border-color: var(--color-danger);
+}
+
+/* The date control's fourth internal focus position — the native picker indicator, which the
+   browser exposes as its own tab stop — holds focus inside the control rather than on it, so
+   global.css's `:focus-visible` rule cannot match the field and no ring would be drawn while
+   focus is there. `:focus-within` matches in exactly that case, and the `:not(:focus-visible)`
+   guard keeps this rule to the position the global rule misses, so the other three positions
+   keep exactly the ring they already had. Same tokens, so this ring cannot drift from that one. */
+.input[type='date']:focus-within:not(:focus-visible) {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.textarea {
+  /* Two lines of text plus the vertical padding, so the description reads as a multi-line
+     control without relying on the rows attribute alone. */
+  min-height: calc(var(--space-6) * 2);
+  resize: vertical;
+}
+
+/* Field-level messages and the form-level message. Both wrap rather than widen the page,
+   and neither is ever visually hidden: the message beside its control is what tells a
+   user why a submission was refused. */
+.fieldError {
+  font-size: var(--font-size-sm);
+  color: var(--color-danger);
+  overflow-wrap: anywhere;
+}
+
+.formError {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-sm);
+  background-color: color-mix(in srgb, var(--color-danger) 8%, var(--color-surface));
+  color: var(--color-danger);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* Actions wrap onto a second row at narrow widths instead of shrinking or being hidden,
+   so both are reachable at 320px. The minimum height keeps each one a comfortable target
+   on a touch screen. */
+.submit,
+.cancel {
+  max-width: 100%;
+  min-height: calc(var(--space-6) + var(--space-3));
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  font-weight: var(--font-weight-bold);
+  cursor: pointer;
+}
+
+.submit {
+  border: 1px solid var(--color-accent);
+  background-color: var(--color-accent);
+  color: var(--color-on-accent);
+}
+
+.cancel {
+  border: 1px solid var(--color-border-control);
+  background-color: var(--color-surface);
+  color: var(--color-text);
+}
+
+.submit:disabled,
+.cancel:disabled {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+}
+
+/* The in-flight hint for a pending submit. Opacity cannot change the button's measured
+   size, so the action row never reflows while a request is outstanding, and it leaves the
+   focus indicator drawn. The selector names the disabled state too, because a pending
+   submission disables its own submit control and the disabled rule above out-specifies a
+   bare class: without that pairing the in-flight opacity and cursor could never apply. */
+.submit:disabled.busy {
+  opacity: var(--opacity-busy);
+  cursor: progress;
+}
+
+/* Hover is a pointer-only state, so it is declared only where the device has one and never
+   for a control that is currently disabled. */
+@media (hover: hover) {
+  .submit:not(:disabled):hover {
+    border-color: color-mix(in srgb, var(--color-accent) 80%, var(--color-text));
+    background-color: color-mix(in srgb, var(--color-accent) 80%, var(--color-text));
+  }
+
+  .cancel:not(:disabled):hover {
+    border-color: var(--color-text);
+  }
+}
+
+/* The shared duration token is what makes every hovered control in the interface ease at
+   the same rate; the query keeps the transition away from a user who asked for reduced
+   motion. */
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .submit,
+  .cancel {
+    transition:
+      background-color var(--transition-duration) ease-out,
+      border-color var(--transition-duration) ease-out;
+  }
+}
+
+/* Pressed. Declared outside the hover query so a touch device gets the same feedback, and after
+   the hover rules so a press wins while both apply on a pointer device. The accent-filled submit
+   deepens one step — the same mix its hover uses, one ratio further in — and the surface-filled
+   Cancel fills with the accent and takes the on-accent text. Neither rule touches a control's
+   size, position or transition, and the focus indicator stays global.css's own. */
+.submit:not(:disabled):active {
+  border-color: color-mix(in srgb, var(--color-accent) 65%, var(--color-text));
+  background-color: color-mix(in srgb, var(--color-accent) 65%, var(--color-text));
+}
+
+.cancel:not(:disabled):active {
+  border-color: var(--color-accent);
+  background-color: var(--color-accent);
+  color: var(--color-on-accent);
+}
+
+@media (min-width: 480px) {
+  .fields {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  /* The title takes its own row. Kept in its own rule, separate from the description
+     below, so that a browser without :has() still gets the title spanning both columns. */
+  .fieldTitle {
+    grid-column: 1 / -1;
+  }
+
+  /* The description takes its own row too, because its multi-line control reads badly in
+     a half-width column. With those two spanning, priority and due date share a row. */
+  .fields > .field:has(textarea) {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (min-width: 768px) {
+  .form {
+    padding: var(--space-5);
+  }
+
+  .fields {
+    gap: var(--space-4);
+  }
+
+  .actions {
+    gap: var(--space-3);
+  }
+}

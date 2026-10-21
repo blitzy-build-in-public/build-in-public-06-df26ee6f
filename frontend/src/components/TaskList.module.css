@@ -1,0 +1,168 @@
+/*
+ * frontend/src/components/TaskList.module.css
+ *
+ * Scoped styles for `TaskList.tsx`: the list heading, the four states the list can be in
+ * — loading, empty, filtered-empty and retryable error — and the list itself.
+ *
+ * TaskList.tsx applies exactly these five class names from this module and no others:
+ *   heading   the h2 above the list
+ *   status    the polite loading region (role="status")
+ *   empty     the empty-state region and the filtered-empty region (the component applies
+ *             this one class to both; the two renderings are told apart by their copy and
+ *             by whether they carry a Clear filters control)
+ *   error     the retryable-error region (role="alert")
+ *   list      the ul that holds the task items
+ *
+ * The Clear filters and Retry controls take no class of their own from the component, so
+ * they are reached with the descendant selectors further down, which CSS modules scope
+ * like any other selector.
+ *
+ * Every colour, space, radius and font size below is a custom property published by
+ * frontend/src/styles/global.css — never a literal — so retuning the design happens in
+ * that one file. No rule here touches the focus indicator: global.css owns :focus-visible,
+ * and every control inside these regions has to keep a visible ring.
+ *
+ * `list-style: none` on the ul is deliberate, and the one caveat it carries — Safari's
+ * VoiceOver may drop the list semantics when a list's markers are removed — is handled
+ * where it belongs, by the explicit role="list" the component puts on the ul, not by a
+ * workaround in this file.
+ */
+
+.heading {
+  margin-block: 0 var(--space-3);
+  font-size: var(--font-size-lg);
+  line-height: var(--line-height-tight);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text);
+}
+
+/* Loading. A boxed, muted region rather than a stray line of text, so the wait reads as
+   one of the list's own states. It carries no control: the request is already in flight
+   and there is nothing for the user to do but wait. */
+
+.status {
+  margin: 0;
+  padding-block: var(--space-3);
+  padding-inline: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface-muted);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+/* Empty list and filter matched nothing. The same boxed treatment as the loading region,
+   centred around the message with the Clear filters control on a token gap below it; the
+   two renderings differ by their copy alone. `overflow-wrap: anywhere` keeps a long
+   sentence from widening the page at 320px. */
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding-block: var(--space-5);
+  padding-inline: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface-muted);
+  color: var(--color-text-muted);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+/* Retryable failure: the one state the user has to act on, and therefore the loudest of
+   the four — a heavier danger border and a danger tint against the two muted boxes above,
+   with the message in the body text colour and the Retry control on a token gap below it.
+   The tint is mixed from two published tokens because global.css has no danger-surface
+   token of its own; no literal colour enters this file. */
+
+.error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding-block: var(--space-4);
+  padding-inline: var(--space-4);
+  border: 2px solid var(--color-danger);
+  border-radius: var(--radius-md);
+  background-color: color-mix(in srgb, var(--color-danger) 6%, var(--color-surface));
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+/* The two state controls, reached through the regions that hold them. One treatment
+   family, the same as the interface's other action buttons, and never hidden, truncated
+   or shrunk: the visible word is what the user and the component tests find them by.
+   Both are pointer and touch targets, so they carry a block-size floor — the same 48px
+   token the list's row actions use — and grow with their label rather than being fixed
+   by it. No inline size is declared, so a narrow viewport narrows the space around the
+   label, never the label itself. */
+
+.empty button,
+.error button {
+  min-block-size: var(--space-7);
+  padding-block: var(--space-2);
+  padding-inline: var(--space-4);
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .empty button:hover,
+  .error button:hover {
+    border-color: var(--color-accent);
+    color: var(--color-accent);
+  }
+}
+
+/* Pressed. Both state controls fill with the accent and take the on-accent text, so a press reads
+   the same on a pointer device and on touch; size, position and the focus indicator are untouched.
+   Declared after the hover rules so a press wins while both apply. */
+.empty button:active,
+.error button:active {
+  border-color: var(--color-accent);
+  background-color: var(--color-accent);
+  color: var(--color-on-accent);
+}
+
+/* Gated on `no-preference` so a reduced-motion user gets no transition at all;
+   global.css additionally neutralizes transition durations under `reduce`. */
+
+@media (prefers-reduced-motion: no-preference) {
+  .empty button,
+  .error button {
+    transition:
+      border-color var(--transition-duration) ease-out,
+      color var(--transition-duration) ease-out;
+  }
+}
+
+/* One card per task, stacked at every width: the list never lays items out in columns, so
+   nothing in it can push the page sideways at 320px. `min-inline-size: 0` is the logical
+   form of the `min-width: 0` a flex child needs before it is allowed to shrink below its
+   content. The items themselves are styled by TaskItem.module.css. */
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-inline-size: 0;
+}
+
+/* From 768px the rows sit in the page shell's capped, centred column, so the cards can
+   sit closer together without the stack losing its rhythm. The column's own width and
+   inline padding belong to .app in global.css; nothing about width is declared here. */
+
+@media (min-width: 768px) {
+  .list {
+    gap: var(--space-2);
+  }
+}

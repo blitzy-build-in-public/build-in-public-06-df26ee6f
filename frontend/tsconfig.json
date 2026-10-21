@@ -1,0 +1,37 @@
+{
+  // Compilation unit for the browser workspace: every module under `src` and `tests`
+  // type-checks here, under the strict options inherited from the base file, with the
+  // bundler's module resolution and React's automatic JSX runtime. `vite.config.ts` is
+  // deliberately absent — it runs in Node and belongs to the separate unit in
+  // `tsconfig.node.json`, which this workspace's `typecheck` script also runs.
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    // Vite resolves and bundles every import itself, so this workspace writes
+    // extensionless specifiers and does not need NodeNext's `.js` suffixes.
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+
+    // React 19's automatic runtime, so no component imports React to render JSX.
+    "jsx": "react-jsx",
+
+    // The base file's ES2022 baseline plus the browser globals the components and the
+    // jsdom test layer use.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+
+    // `vite/client` declares the `*.module.css` modules the components import and types
+    // `import.meta.env`; `vitest/globals` types the describe/it/expect/vi globals that
+    // `test.globals: true` in `vite.config.ts` registers.
+    "types": ["vite/client", "vitest/globals"],
+
+    // Vite emits the bundle and `tsc` only type-checks; Vite transpiles each file on
+    // its own, so the compiler rejects the constructs a per-file transform cannot
+    // express.
+    "noEmit": true,
+    "isolatedModules": true
+  },
+  // `tests` is part of the program because `tests/setup.ts` augments Vitest's
+  // `Assertion` with the jest-dom matchers, and an augmented interface applies only
+  // while the module declaring it is included.
+  "include": ["src", "tests"],
+  "exclude": ["node_modules", "dist"]
+}

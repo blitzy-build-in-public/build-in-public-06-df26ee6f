@@ -1,0 +1,32 @@
+{
+  // Compilation unit for the workspace's Node-run configuration file. `vite.config.ts` is
+  // loaded by Vite's own ESM loader rather than bundled for the browser, so the app program
+  // in `tsconfig.json` deliberately excludes it and this project type-checks it instead:
+  // the workspace's `typecheck` script runs `tsc --noEmit` here after the app program.
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    // Vite imports this file as ESM and resolves its specifiers with the exports maps the
+    // installed packages declare, and it transpiles the file per module rather than as a
+    // program.
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+
+    // The base file's ES2022 baseline and nothing more: this program types a configuration
+    // module, so it carries no browser globals.
+    "lib": ["ES2022"],
+
+    // The configuration reads `process.env.PORT`, so the `node` type definitions are part
+    // of this program. They are not declared by this workspace: `@types/node` is pinned by
+    // `backend/package.json` and the single root install hoists it to the repository-root
+    // `node_modules`, which is where this entry resolves it from.
+    "types": ["node"],
+
+    // `tsc` only type-checks; Vite performs the transform and its own per-file transpiler
+    // cannot express a construct that depends on another module's types.
+    "noEmit": true,
+    "isolatedModules": true
+  },
+  // The one file this project exists to check. `src` and `tests` belong to the app program.
+  "include": ["vite.config.ts"],
+  "exclude": ["node_modules"]
+}

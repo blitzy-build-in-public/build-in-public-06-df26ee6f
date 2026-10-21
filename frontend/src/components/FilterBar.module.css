@@ -1,0 +1,93 @@
+/*
+ * frontend/src/components/FilterBar.module.css
+ *
+ * Scoped styles for `frontend/src/components/FilterBar.tsx` — the status, priority and
+ * sort controls that narrow the task list. The controls hold no task data of their own:
+ * changing one emits the next `TaskFilters` (see `../api/types.ts`), and the list is then
+ * refetched with the new query parameters so the server stays the single implementation
+ * of filtering and ordering.
+ *
+ * Class names below are this module's whole surface and match the component exactly:
+ *   .bar      the wrapper holding the three controls
+ *   .control  the wrapper around one label + select pair
+ *   .label    that pair's <label>
+ *   .select   each of the three <select> elements
+ * Renaming or adding one here means changing `FilterBar.tsx` in the same commit.
+ *
+ * Every value comes from a custom property declared in `frontend/src/styles/global.css`,
+ * and every size is stated as a logical property. This sheet declares no colour, space,
+ * radius or font-size literal, and no rule that removes the focus indicator — the ring on
+ * each select comes from the global `:focus-visible` rule.
+ *
+ * The layout is mobile-first onto the breakpoints global.css names: up to 479px the three
+ * controls stack in one column, and from 480px they sit on one row. All three controls stay
+ * visible and keyboard-reachable at every width — none is hidden, collapsed into a menu or
+ * placed in a scroll container — and no control is given a fixed pixel width.
+ */
+
+.bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  /* A flex item starts from `min-inline-size: auto`, which refuses to shrink below its
+     content and is the usual cause of a page that scrolls sideways at 320px. */
+  min-inline-size: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+}
+
+.control {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-inline-size: 0;
+}
+
+.label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-normal);
+  line-height: var(--line-height-tight);
+  color: var(--color-text-muted);
+}
+
+.select {
+  /* A percentage width, never pixels, and allowed to shrink: a <select> sized in pixels
+     is one of the classic causes of a horizontal scrollbar at 320px. */
+  inline-size: 100%;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  box-sizing: border-box;
+  font: inherit;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+  color: var(--color-text);
+}
+
+/* One row from 480px, sized from what each control has to show rather than from an equal
+   third of the line: `flex: 1 1 auto` gives a control its own longest option as its basis and
+   then shares the spare space equally, so no select ends up narrower than the value it
+   displays. `min-inline-size: 0` still lets a control shrink rather than overflow the page,
+   and `flex-wrap: wrap` on `.bar` stays as the guard. */
+@media (min-width: 480px) {
+  .bar {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-end;
+  }
+
+  .control {
+    flex: 1 1 auto;
+    min-inline-size: 0;
+  }
+
+  /* The base rule's block padding stays; only the inline padding tightens, to the tightest
+     published step, because at 480px the row is just wide enough for the three controls'
+     natural widths and the two gaps between them. */
+  .select {
+    padding-inline: var(--space-1);
+  }
+}

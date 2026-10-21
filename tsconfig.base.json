@@ -1,0 +1,26 @@
+{
+  // Shared strict language options for both workspaces: the API (backend, NodeNext) and the
+  // browser bundle (frontend, Bundler with react-jsx and the DOM libraries). Each workspace
+  // extends this file and supplies its own module system, resolution, libraries, types,
+  // output location and file set, so nothing environment-specific belongs here.
+  "compilerOptions": {
+    // Validated against the Node.js 20.19.0 runtime floor the project supports; the same
+    // target is available in every browser the responsive requirement cares about.
+    "target": "ES2022",
+    "lib": ["ES2022"],
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+
+    // The SQLite driver is a CommonJS module typed with `export =`, so a default import of it
+    // only type-checks with interop enabled; this also implies allowSyntheticDefaultImports.
+    "esModuleInterop": true,
+
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "sourceMap": true
+  }
+}
