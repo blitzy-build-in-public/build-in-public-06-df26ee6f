@@ -9,10 +9,17 @@
  *
  * Every rule is severity 'error', which is what makes that command exit non-zero on a violation.
  *
- * Both entry points cruise with the repository root as their working directory, which is the base
- * the patterns below are written against: dependency-cruiser then reports a module as
- * `backend/src/domain/task.ts`. Each pattern keeps a `(^|/)` anchor in front of its directory so
- * the same rules hold when a cruise is handed an absolute path instead.
+ * Both entry points cruise with the repository root as their base, which is what the patterns
+ * below are written against: dependency-cruiser then reports a module as
+ * `backend/src/domain/task.ts`. The documented command above is run from the repository root,
+ * so for it the base is simply the working directory. The architecture test sets `baseDir` to
+ * that root explicitly instead, because dependency-cruiser resolves the target and reports a
+ * module relative to that base, whose default is the runner's working directory: `npm test`
+ * starts that test's run in `backend/`, so the default base would resolve its `backend/src`
+ * target to `backend/backend/src` and name any module it did reach `src/...`, matching none of
+ * the patterns written against `backend/src/...`. Each pattern keeps a `(^|/)`
+ * anchor in front of its directory so the same rules hold when a cruise is handed an absolute
+ * path instead.
  *
  * The dependency direction they encode is interface -> application -> domain, with
  * infrastructure implementing the ports the application declares:

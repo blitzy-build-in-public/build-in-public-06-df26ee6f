@@ -17,6 +17,7 @@
 import { TaskNotFoundError } from '../domain/errors.js';
 import type { TaskRepository } from './TaskRepository.js';
 
+/** Removes the task an identifier names, reporting a missing record as {@link TaskNotFoundError}. */
 export class DeleteTask {
   /** The persistence port, the only dependency this use case has. */
   private readonly repository: TaskRepository;

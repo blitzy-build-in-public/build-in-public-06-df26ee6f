@@ -36,6 +36,7 @@
  */
 import type { Task } from '../domain/task.js';
 
+/** The persistence port: the five operations the use cases perform, with no storage type in any signature. */
 export interface TaskRepository {
   /**
    * Stores a new task, which must not already exist: an identifier already present in the

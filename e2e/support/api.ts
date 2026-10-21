@@ -1,10 +1,9 @@
 /**
  * Shared request helpers for the Playwright end-to-end suite.
  *
- * Scope authority: the file creation plan row `e2e/support/api.ts` — "request helpers, including
- * clearing tasks between specs" (test support, priority Medium), reinforced by the repository tree
- * line for `e2e/support/api.ts` ("request-fixture helpers, including clearing all tasks") and by the
- * end-to-end determinism rule that each spec clears the data it asserts on through this module.
+ * This module holds the request helpers that clear and seed tasks for every spec: each spec clears
+ * the data it asserts on through it before it asserts anything, so no spec depends on what another
+ * spec left in the store.
  *
  * Every helper takes the built-in `request` fixture (`APIRequestContext`) as its first parameter, so
  * this module owns no request context of its own. Every path is relative: the fixture resolves it
@@ -17,6 +16,14 @@
  * `any`, no non-null assertion, no `@ts-expect-error` and no lint suppression.
  */
 import { expect, type APIRequestContext } from '@playwright/test';
+
+/*
+ * These wire types are declared here rather than imported from the application: this suite drives
+ * the product over HTTP as a black box and must not depend on the application's own modules, so the
+ * contract it asserts against is declared once, in this module, and every spec shares it. An import
+ * of the application's types would couple the suite to the internals it exists to check from the
+ * outside.
+ */
 
 /** Priority level carried by every task. */
 export type TaskPriorityDto = 'low' | 'medium' | 'high';
