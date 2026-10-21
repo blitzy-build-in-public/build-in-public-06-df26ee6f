@@ -19,7 +19,7 @@ import type { Task } from '../../src/domain/task.js';
  *   task is no longer stored — deleted since it was read — which is what the use cases turn into
  *   the domain's `TaskNotFoundError` and the HTTP layer into a 404. Neither is emulated with an
  *   upsert: an upsert would silently recreate a record deleted between a read and the write that
- *   followed it, undoing a delete that had already succeeded (AAP 0.2.2).
+ *   followed it, undoing a delete that had already succeeded.
  * - `findAll` returns every stored task, with no filtering and no ordering guarantee. Filtering
  *   and sorting belong to the application layer, in one shared implementation, so that two stores
  *   cannot produce two different orderings; the order this class happens to yield is `Map`

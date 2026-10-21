@@ -4,9 +4,9 @@
  * The use case is constructed exactly as the composition root constructs it, but with the two
  * substitutes the application layer is tested against — `InMemoryTaskRepository` and a clock frozen
  * at a fixed instant — so no framework, no SQLite file and no filesystem takes part, and no
- * assertion depends on when the suite ran. This is acceptance criterion 2 (a patch changes the
- * fields it names, `createdAt` never moves and `updatedAt` advances) and criterion 10 (the store is
- * replaceable without touching the domain or the application) as executable evidence.
+ * assertion depends on when the suite ran. This is the executable evidence that a patch changes
+ * the fields it names, that `createdAt` never moves and `updatedAt` advances, and that the store is
+ * replaceable without touching the domain or the application.
  *
  * Every rejection case also asserts the stored record is untouched, and the last two cases pin the
  * port's safety rule: a write that replaced no row means the task is gone, so the use case reports

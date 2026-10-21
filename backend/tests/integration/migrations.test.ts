@@ -22,10 +22,9 @@
  * own close rejects — the same release the opener's refused-open case below proves, over a file
  * reserved the same way, so the cases sit in the suite that already owns that release.
  *
- * The file is created by the run's implementation plan (its tree lists this path and its file map
- * gives it the purpose "fresh, current, version-ahead and restart-survival cases"), so the DDL, the
- * pragmas and the version guard it exercises are the ones that ship — nothing here is a copy of
- * them.
+ * This suite owns the fresh, current, version-ahead and restart-survival cases of the schema, so
+ * the DDL, the pragmas and the version guard it exercises are the ones that ship — nothing here is
+ * a copy of them.
  *
  * Two properties keep the suite honest and repeatable. First, every database file it touches comes
  * from `createTempDatabase`, so the developer's `backend/data/todo.db` and the end-to-end suite's
@@ -796,8 +795,9 @@ describe('the resource lifecycle of the composition root', () => {
       // live, so the empty result asserted after the close means the three were released.
       expect(openTargetsUnder(temp.directory).length).toBeGreaterThan(0);
 
-      // A server whose close fails is what the finding describes. The hook is registered after the
-      // application is ready because that is when a real server would carry its own close steps.
+      // A server whose `close` rejects must still release the database handle. The hook is
+      // registered after the application is ready because that is when a real server would carry
+      // its own close steps.
       composed.app.addHook('onClose', async () => {
         throw new Error(CLOSE_FAILURE_MESSAGE);
       });

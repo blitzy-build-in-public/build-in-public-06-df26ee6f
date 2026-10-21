@@ -40,7 +40,7 @@ export interface FixedClock extends Clock {
  *
  * The clock never consults the wall clock — not to resolve a missing argument and
  * not in `now()` — which is what makes the `createdAt` / `updatedAt` assertion of
- * the update use case deterministic (AAP 0.10.2).
+ * the update use case deterministic.
  *
  * @param instant The instant to freeze at, as a `Date` or a date string. Throws
  * if the value does not parse to a real time, rather than letting an

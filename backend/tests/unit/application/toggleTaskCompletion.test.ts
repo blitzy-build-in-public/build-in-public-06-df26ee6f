@@ -6,7 +6,7 @@
  * `updatedAt` advancing to the instant the injected clock reports while `createdAt` and every other
  * field are preserved; then the two failure paths the repository port's boolean return exists for:
  * an identifier that matches no task, and a write that replaced no row because the task was deleted
- * between the read and the write. That is the use-case evidence for acceptance criterion 4, whose
+ * between the read and the write. That is the use-case evidence for the completion rule, whose
  * observable half — the task moving between the open and completed filters and losing its overdue
  * flag — belongs to the frontend suites and the end-to-end run.
  *

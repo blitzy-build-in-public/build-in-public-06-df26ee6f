@@ -7,15 +7,15 @@
  *
  * What it evidences:
  *
- * - AAP 0.10.2's unit-application row for this use case: the stored task comes back deep-equal, and
- *   an identifier matching no task is the only other outcome.
- * - AAP 0.10.5's missing-record failure path, which is half of the evidence that `GET /api/tasks/:id`
+ * - The stored task comes back deep-equal, and an identifier matching no task is the only other
+ *   outcome.
+ * - The missing-record failure path, which is half of the evidence that `GET /api/tasks/:id`
  *   answers 200 and 404 — the response envelope and the status line belong to the route
  *   integration suite, so nothing here asserts either.
- * - AAP 0.2.1/0.7.1's one-read discipline: `execute` is a single call to `findById`, never a scan of
- *   `findAll` with an in-memory lookup over the result.
- * - This folder's share of AAP 0.10.6's ≥90% line, statement, function and branch gate over
- *   `src/application/**`.
+ * - The one-read discipline: `execute` is a single call to `findById`, never a scan of `findAll`
+ *   with an in-memory lookup over the result.
+ * - This folder's share of the coverage gate over `src/application/**`: at least 90% of lines,
+ *   statements, functions and branches, enforced by `backend/vitest.config.ts`.
  *
  * It deliberately does not restate the port's own conventions — a miss resolving `null`, values
  * being copied on the way in and out. The shared conformance suite in
@@ -64,7 +64,7 @@ const POPULATED_TASK: Task = {
 /** An identifier of the shape the system generates, held by no task. */
 const UNKNOWN_ID = 'missing';
 
-/** An identifier that is not a UUID at all. AAP 0.5.5 makes it indistinguishable from a deleted one. */
+/** An identifier that is not a UUID at all, indistinguishable to a client from a deleted one. */
 const MALFORMED_ID = 'not-a-uuid-at-all';
 
 /** The fixtures the read is exercised over, each named for the case it contributes. */
@@ -143,8 +143,8 @@ describe('GetTask', () => {
   });
 
   it('raises TaskNotFoundError for an identifier that is not a UUID at all', async () => {
-    // Never a validation error: AAP 0.5.5 accepts the path identifier as supplied, so "malformed"
-    // and "deleted" are deliberately the same outcome for a client.
+    // Never a validation error: the path identifier is accepted as supplied, so "malformed" and
+    // "deleted" are deliberately the same outcome for a client.
     const error = await captureNotFound(MALFORMED_ID);
 
     expect(error).toBeInstanceOf(TaskNotFoundError);

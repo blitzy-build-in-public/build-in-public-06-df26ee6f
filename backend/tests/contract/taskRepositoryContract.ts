@@ -7,9 +7,9 @@
  * runs this one suite twice — against `SqliteTaskRepository` on a temporary database file
  * reserved by `backend/tests/support/tempDatabase.ts`, and against the `Map`-backed in-memory
  * implementation in `backend/tests/support/inMemoryTaskRepository.ts` — and both runs must pass.
- * That is the automated evidence for acceptance criterion 10: substituting the adapter requires
- * no change to `src/domain` or `src/application`, because both implementations are driven here
- * through the port alone and each is held to the same observable behaviour.
+ * That is the automated evidence that substituting the adapter requires no change to `src/domain`
+ * or `src/application`, because both implementations are driven here through the port alone and
+ * each is held to the same observable behaviour.
  *
  * What it asserts is exactly what the port promises: a store starts empty; a task round-trips
  * through `insert` and `findById` with every field's own kind intact; `findAll` lists every

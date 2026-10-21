@@ -1953,8 +1953,8 @@ describe('task routes (storage failure)', () => {
     );
     expect(carriers).not.toHaveLength(0);
 
-    // The failure record carries the request context itself, which is what keeps a 500 as readable as
-    // it was when the framework wrote a per-request record naming the request.
+    // The failure record carries the request context itself, so an operator reading the log can see
+    // which request failed.
     for (const record of carriers) {
       expect(record['method']).toBe('GET');
       expect(record['url']).toBe(`/api/tasks/${ADDRESSED_ID}`);

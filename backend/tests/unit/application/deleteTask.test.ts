@@ -5,11 +5,11 @@
  * The use case is constructed with `InMemoryTaskRepository` and no clock — `DeleteTask` takes the
  * repository alone because a deletion writes no timestamp — so no SQLite file, driver, framework
  * or clock is present. That absence is this folder's evidence that the storage adapter is
- * replaceable without touching `src/application` (AAP 0.10.3).
+ * replaceable without touching `src/application`.
  *
  * Every assertion stays at the use-case level: the resolved value and the store's contents, never
- * a response body or a status line, which the route suite owns. The suite evidences acceptance
- * criterion 3's use-case half — a confirmed delete removes the task, and the same delete repeated
+ * a response body or a status line, which the route suite owns. The suite evidences the use-case
+ * half of the delete rule — a confirmed delete removes the task, and the same delete repeated
  * raises `TaskNotFoundError`, which the route suite then reports as a 204 followed by a 404.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -78,8 +78,8 @@ describe('DeleteTask', () => {
   it('raises TaskNotFoundError when the same task is deleted twice', async () => {
     await deleteTask.execute({ id: SEEDED.id });
 
-    // The use-case statement of criterion 3's "a repeat DELETE returns 404": the port answers
-    // `false` the second time and the use case turns that into the domain's not-found error.
+    // The use-case half of "a repeat DELETE returns 404": the port answers `false` the second time
+    // and the use case turns that into the domain's not-found error.
     const error = asTaskNotFoundError(
       await rejectionOf(() => deleteTask.execute({ id: SEEDED.id })),
     );
@@ -140,7 +140,7 @@ describe('DeleteTask', () => {
     // A `false` answer means the row is already gone. Re-inserting or repairing it here would
     // resurrect a task deleted between the read and the write that followed it, quietly undoing a
     // delete that had already succeeded — which is exactly why the port keeps `insert` and
-    // `update` apart from one another (AAP 0.2.2 and 0.3.6).
+    // `update` apart from one another.
     expect(insertSpy).not.toHaveBeenCalled();
     expect(updateSpy).not.toHaveBeenCalled();
     expect(findByIdSpy).not.toHaveBeenCalled();
