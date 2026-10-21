@@ -154,12 +154,26 @@ export const TaskItem = memo(function TaskItem({
           </div>
 
           <div className={styles.actions}>
-            {/* The visible words are the controls' accessible names, so neither button carries a
-                label that would rename it away from what it says. */}
-            <button type="button" className={styles.action} onClick={() => onEdit(task.id)}>
+            {/* Each control is named for the task it acts on rather than by its visible word alone:
+                that word is the same on every row, so a long list would hand a screen reader a run
+                of buttons all called "Edit" and all called "Delete", none saying which task it
+                belongs to. The visible word leads the name, so the label a user reads stays
+                contained in the name and voice control still matches the words on screen — the same
+                idiom the checkbox's label above uses. */}
+            <button
+              type="button"
+              className={styles.action}
+              aria-label={`Edit “${task.title}”`}
+              onClick={() => onEdit(task.id)}
+            >
               Edit
             </button>
-            <button type="button" className={styles.action} onClick={openConfirmation}>
+            <button
+              type="button"
+              className={styles.action}
+              aria-label={`Delete “${task.title}”`}
+              onClick={openConfirmation}
+            >
               Delete
             </button>
           </div>

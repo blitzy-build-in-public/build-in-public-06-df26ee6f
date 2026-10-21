@@ -7,9 +7,11 @@
  * filters, groups or reformats a task, and the interface holds a single ordering implementation
  * rather than two that can disagree.
  *
- * Loading and failure are rendered independently of the list itself, so a refetch that fails
- * never blanks out tasks the user could still read, and the loading region takes nothing away:
- * the form and the filter bar belong to `App.tsx` and stay usable while a load is in flight.
+ * A load that failed renders its retryable alert in place of the list, so its two failure paths —
+ * the initial load and a refetch — show the same thing. Presenting rows the server has not confirmed
+ * for the filters in force would put on screen a state it never committed. A load still in flight
+ * takes nothing away: rows already read stay readable, and the form and the filter bar belong to
+ * `App.tsx` and stay usable.
  *
  * An account with no tasks at all and a filter that matched nothing are two different screens,
  * not one message in two wordings: the first invites the user to add their first task, the second
@@ -177,8 +179,9 @@ export const TaskList = memo(function TaskList({
         </p>
       )}
 
-      {/* The one region the user has to act on. It is rendered whatever the list below holds, so a
-          failed refetch leaves tasks already on screen readable. */}
+      {/* The one region the user has to act on. The rows are held back while this stands — a failure
+          invalidates them for the filters in force — so a failed refetch shows the alert in place of
+          the list, exactly as a failed initial load does. */}
       {status === 'error' && (
         <div className={styles.error} role="alert">
           <p>{loadErrorMessage}</p>
@@ -207,8 +210,11 @@ export const TaskList = memo(function TaskList({
       {/* A list element rather than styled divs, so a screen reader announces the set and its
           size. `role="list"` is spelled out because a list whose markers are removed is not
           reported as one by every screen reader; the tasks themselves are `<li>` elements. The
-          id is the React key, so a task keeps its identity across refetches. */}
-      {tasks.length > 0 && (
+          id is the React key, so a task keeps its identity across refetches.
+          Rendered only while no load has failed: a failure invalidates these rows for the filters
+          in force, so it shows the alert above in their place and both failure paths render alike. A
+          load in flight is not a failure and leaves them readable. */}
+      {status !== 'error' && tasks.length > 0 && (
         <ul className={styles.list} role="list">
           {tasks.map((task) => (
             <TaskRow

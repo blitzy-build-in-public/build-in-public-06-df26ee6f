@@ -203,6 +203,18 @@ migration rather than as a manual edit. The connection is opened with a five-sec
 waits instead of failing. Concurrent edits to one task are last-write-wins, and `updatedAt` reports
 the write that survived.
 
+SQLite keeps the write-ahead log's index in a memory-mapped `-shm` file beside the database. If that
+file becomes unwritable after startup — an immutable attribute, permissions that no longer permit
+the write, or a filesystem or mount that cannot back the mapping — a request that touches it faults
+the process inside the mapping, and no handler in the process can turn that fault into a response:
+the request gets none, and the log ends at the startup line. The recovery is to restore write access
+to the file (clear the immutable attribute, repair its permissions, or repair the filesystem) and
+start the process again; tasks already written are in the database file. An unwritable `-wal` file,
+or a filesystem that is full, is an ordinary storage failure by contrast: reads keep succeeding and
+a write answers the generic 500 with the cause logged at error level, while the process stays up.
+WAL is what lets a read proceed while a write commits, and the mapping its index needs is what makes
+the fault above possible.
+
 To reset the data, stop the process and delete the database file together with its sidecars:
 
 ```bash

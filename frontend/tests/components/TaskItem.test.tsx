@@ -7,8 +7,9 @@
  * of the description and due-date regions when the task has neither. It pins what the row's
  * controls report, and — the reason this file exists at all — that the confirmation dialog is the
  * only route to the deletion: cancelling, pressing Escape and clicking outside the dialog each
- * leave the delete untouched, and the dialog's own confirm control reaches it exactly once, with
- * the whole task.
+ * leave the delete untouched, a click on the card itself leaves the dialog open, Tab cycles between
+ * the dialog's two controls instead of leaving the dialog, and the dialog's own confirm control
+ * reaches the delete exactly once, with the whole task.
  *
  * Every assertion is reached through a query a user could perform — role, accessible name, label,
  * text — so no class name, no style, no snapshot and no test id is asserted anywhere. The suite
@@ -105,7 +106,10 @@ function renderItem(task: Task, editing = false) {
  * @returns The open dialog element.
  */
 async function openDeleteConfirmation(user: UserEvent): Promise<HTMLElement> {
-  await user.click(screen.getByRole('button', { name: 'Delete' }));
+  // The row's action is matched by the word it leads with rather than by its whole accessible name:
+  // the item names each control for the task it acts on ("Delete “Buy milk”"), so the exact-name
+  // form belongs to the case that asserts that naming and not to every case that presses it.
+  await user.click(screen.getByRole('button', { name: /^Delete/ }));
 
   return screen.findByRole('dialog');
 }
@@ -184,8 +188,10 @@ describe('TaskItem', () => {
       const checkbox = screen.getByRole('checkbox', { name: /Buy milk/ });
       expect(checkbox).not.toBeChecked();
       // The label is bound to the control, so the control is reachable by its label too — which is
-      // what makes it announced as this task's rather than as a bare checkbox among many.
-      expect(screen.getByLabelText(/Buy milk/)).toBe(checkbox);
+      // what makes it announced as this task's rather than as a bare checkbox among many. The
+      // selector keeps the query to the control itself: the row's two action buttons are named for
+      // their task as well, so the same words reach their accessible names.
+      expect(screen.getByLabelText(/Buy milk/, { selector: 'input' })).toBe(checkbox);
     });
 
     it('reports completion of an open task and applies nothing itself', async () => {
@@ -225,7 +231,7 @@ describe('TaskItem', () => {
       const task = makeTask();
       const { onEdit, onDelete, onSave } = renderItem(task);
 
-      await user.click(screen.getByRole('button', { name: 'Edit' }));
+      await user.click(screen.getByRole('button', { name: /^Edit/ }));
 
       expect(onEdit).toHaveBeenCalledTimes(1);
       expect(onEdit).toHaveBeenCalledWith(task.id);
@@ -253,7 +259,7 @@ describe('TaskItem', () => {
       // The display content is replaced rather than duplicated: no checkbox and none of the
       // display-mode actions remain on screen while the item is being edited.
       expect(screen.queryByRole('checkbox')).toBeNull();
-      expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+      expect(screen.queryByRole('button', { name: /^Edit/ })).toBeNull();
     });
 
     it('sends only the field that changed, as a patch carrying no id', async () => {
@@ -295,8 +301,8 @@ describe('TaskItem', () => {
 
       // Native buttons, not styled elements standing in for them: the tag is what makes them
       // keyboard-operable and reachable by role.
-      expect(screen.getByRole('button', { name: 'Edit' }).tagName).toBe('BUTTON');
-      expect(screen.getByRole('button', { name: 'Delete' }).tagName).toBe('BUTTON');
+      expect(screen.getByRole('button', { name: /^Edit/ }).tagName).toBe('BUTTON');
+      expect(screen.getByRole('button', { name: /^Delete/ }).tagName).toBe('BUTTON');
     });
   });
 
@@ -351,7 +357,8 @@ describe('TaskItem', () => {
       // jsdom implements none of the modal API, so the platform's own Escape handling never runs
       // here: a browser fires `cancel` on the dialog before dismissing it, and dispatching that
       // event is the faithful simulation of what this component listens for. `fireEvent` is used
-      // for nothing else in this suite.
+      // for this and for the repeat press below, the two events `user-event`'s own gestures cannot
+      // express, and for nothing else in this suite.
       fireEvent(dialog, new Event('cancel'));
 
       expect(onDelete).not.toHaveBeenCalled();
@@ -374,6 +381,23 @@ describe('TaskItem', () => {
       expect(dialog).not.toHaveAttribute('open');
     });
 
+    it('stays open when the press repeats the one that opened it, as a double-click does', async () => {
+      const user = userEvent.setup();
+      const { onDelete } = renderItem(makeTask());
+
+      const dialog = await openDeleteConfirmation(user);
+
+      // The second press of a double-click on the row's Delete arrives after the confirmation is
+      // open, at whatever the pointer now rests on — the card, or the backdrop beside it. The
+      // browser counts the presses of one gesture in the click's `detail`, so this is that second
+      // press and it must not dismiss the confirmation the first one asked for. `fireEvent` carries
+      // the count here, which `user-event`'s own gestures never leave above one.
+      fireEvent.click(dialog, { detail: 2 });
+
+      expect(dialog).toHaveAttribute('open');
+      expect(onDelete).not.toHaveBeenCalled();
+    });
+
     it('deletes the whole task, once, and only after the confirmation is confirmed', async () => {
       const user = userEvent.setup();
       const task = makeTask({ title: 'Buy milk' });
@@ -393,5 +417,59 @@ describe('TaskItem', () => {
       expect(onDelete).toHaveBeenCalledWith(task);
       expect(dialog).not.toHaveAttribute('open');
     });
+
+    it('stays open when the click lands on the dialog card rather than on its backdrop', async () => {
+      const user = userEvent.setup();
+      const { onDelete } = renderItem(makeTask());
+
+      const dialog = await openDeleteConfirmation(user);
+      const content = dialog.firstElementChild;
+
+      if (content === null) {
+        throw new Error('The confirmation dialog rendered no content element to click.');
+      }
+
+      // The content wrapper fills the dialog's box and carries the padding the card used to hold on
+      // the dialog itself, so a click anywhere on the card — the space around the heading and the
+      // message included — targets that wrapper rather than the <dialog> element, which is what a
+      // click on the backdrop targets. Nothing is dismissed, so the second click of a rapid
+      // double-click on a row's Delete cannot cancel the confirmation the first one opened.
+      await user.click(content);
+
+      expect(dialog).toHaveAttribute('open');
+      expect(onDelete).not.toHaveBeenCalled();
+    });
+
+    it('keeps Tab inside the dialog, wrapping between its two controls', async () => {
+      const user = userEvent.setup();
+      const { onDelete } = renderItem(makeTask());
+
+      const dialog = await openDeleteConfirmation(user);
+      const cancel = within(dialog).getByRole('button', { name: 'Cancel' });
+      const confirm = within(dialog).getByRole('button', { name: 'Delete' });
+
+      // jsdom implements no part of the modal API, so nothing places focus when the dialog opens:
+      // the move the browser makes into the modal is reproduced here, on the first control, which is
+      // where the platform leaves it.
+      cancel.focus();
+      expect(cancel).toHaveFocus();
+
+      await user.tab();
+      expect(confirm).toHaveFocus();
+
+      // Tab on the last control wraps back to the first instead of landing on document.body, the
+      // stop at which the dialog no longer holds the active element and no focus indicator is drawn.
+      await user.tab();
+      expect(dialog.contains(document.activeElement)).toBe(true);
+      expect(cancel).toHaveFocus();
+
+      // Shift+Tab on the first control wraps to the last: the same cycle at its other end.
+      await user.tab({ shift: true });
+      expect(confirm).toHaveFocus();
+
+      expect(dialog).toHaveAttribute('open');
+      expect(onDelete).not.toHaveBeenCalled();
+    });
+
   });
 });

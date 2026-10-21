@@ -1,6 +1,8 @@
 /**
- * The real API process started twice against one database file — the restart half of the
- * requirement that a task "is still present after reloading the page and restarting the backend".
+ * The real API process driven across a process boundary: restarted against one database file, and
+ * started once so its startup output can be read. That is the restart half of the requirement that a
+ * task "is still present after reloading the page and restarting the backend", and the half of "The
+ * API logs at startup once" that only a spawned process can show.
  *
  * What this suite adds that no other one can. The repository contract, the migration suite and the
  * route suites all reach the database through a port or a handle they open themselves, and they
@@ -24,17 +26,27 @@
  * `node --import tsx src/main.ts` from `backend/` does start the server — so no CLI fallback is
  * used here.
  *
- * Isolation and determinism. The one database file comes from `createTempDatabase`, so the
- * developer's `backend/data/todo.db` and the end-to-end suite's file are never opened; both
- * processes are handed an absolute path inside that temporary directory, and the teardown removes
+ * The startup-output case is the suite's other half. Every other suite composes the application
+ * in-process and drives it through `app.inject()`, which never binds a socket and therefore never
+ * runs the code path that produced the second record the case guards against: a record written by
+ * the HTTP framework's own `listen`, beside the application's own line. Counting the records of a
+ * real start is the only way to observe how many there are, and the framework's banner carries the
+ * same address as the application's line, so it duplicates an answer without adding one — exactly
+ * the deviation the startup line is supposed to avoid. That case starts its child at `LOG_LEVEL`
+ * `info` rather than the `silent` the restart case passes, because the record under test is written
+ * at `info`; nothing in either case asserts on a timestamp.
+ *
+ * Isolation and determinism. Every database file comes from `createTempDatabase`, so the
+ * developer's `backend/data/todo.db` and the end-to-end suite's file are never opened; each process
+ * is handed an absolute path inside one of those temporary directories, and the teardown removes
  * the whole directory with the `-wal`/`-shm` sidecars SQLite writes beside the file. No assertion
  * reads the wall clock: the task's eight fields are compared against the very body the first
  * process returned, so the comparison is between two observations of the API rather than between a
  * value and a timestamp this machine happened to produce.
  *
  * Teardown cannot leak. Every child is tracked as it is started, and `afterAll` kills whatever is
- * still running before it removes the temporary directory — on a failing run as well — so neither a
- * stray server holding the file open nor a database directory survives the suite. Nothing asserts
+ * still running before it removes the temporary directories — on a failing run as well — so neither
+ * a stray server holding the file open nor a database directory survives the suite. Nothing asserts
  * on the first process's exit code or signal: graceful signal handling is not part of the contract
  * `src/main.ts` fixes, so only the fact that it stopped is asserted.
  */
@@ -71,7 +83,7 @@ const FREE_PORT_ATTEMPTS = 5;
 
 /**
  * The explicit per-test timeout, restating the suite-wide 30 seconds configured in
- * `backend/vitest.config.ts`. Two child processes are started, probed and stopped inside this one
+ * `backend/vitest.config.ts`. One or two child processes are started, probed and stopped inside each
  * test, so the bound it runs under is named here rather than left implicit.
  */
 const TIMEOUT_MILLISECONDS = 30_000;
@@ -84,6 +96,56 @@ const TASK_TITLE = 'Survives a restart';
  * produces it. The exact instant is never asserted, because it is the system's own choice.
  */
 const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+/**
+ * The logger level a child is started at unless the case needs a louder one.
+ *
+ * `silent` keeps the restart case's two children from interleaving their startup lines with the
+ * runner's output; the startup-output case overrides it, because the record it counts is written at
+ * `info` and a child started at `silent` would prove nothing about it.
+ */
+const DEFAULT_LOG_LEVEL = 'silent';
+
+/** The logger level the startup-output case starts its child at, which is the level it counts. */
+const STARTUP_LOG_LEVEL = 'info';
+
+/** The pino level number of an `info` record, which is what the startup line is written as. */
+const STARTUP_LEVEL = 30;
+
+/** The startup line's message, which is what distinguishes it from any other level-30 record. */
+const STARTUP_MESSAGE = 'API listening';
+
+/**
+ * The text the framework's own `listen` puts in the record the startup requirement forbids.
+ *
+ * Only a prefix is matched: the framework appends the resolved address to it, and the address is
+ * exactly what the application's own line already reports.
+ */
+const FRAMEWORK_BANNER_TEXT = 'Server listening';
+
+/**
+ * The schema version a freshly reserved database file carries after the entry point migrates it.
+ *
+ * A path no process has opened before is migrated from version 0 to the current version, so this is
+ * the whole schema the child applies rather than the version of the developer's own file.
+ */
+const FRESH_SCHEMA_VERSION = 1;
+
+/** How long the startup record is given to arrive once the child has answered health. */
+const STARTUP_DEADLINE_MILLISECONDS = 5_000;
+
+/** How long the startup-record probe waits between attempts. */
+const STARTUP_POLL_INTERVAL_MILLISECONDS = 50;
+
+/**
+ * How long the case waits after the record first appears before it counts.
+ *
+ * The record and any record written beside it arrive within microseconds of each other, so this only
+ * has to outlast a stdout flush that a chunk boundary delayed; it is a settle window over an
+ * accumulate-and-count step, never a substitute for the bounded probes, and no assertion depends on
+ * its length.
+ */
+const SETTLE_MILLISECONDS = 300;
 
 /** The three priority names the entity and the table both accept. */
 type TaskPriority = 'low' | 'medium' | 'high';
@@ -119,16 +181,20 @@ interface TaskBody {
  * One spawned API process, together with what a caller needs to talk to it and to explain its
  * failure.
  *
- * `output()` returns the child's stdout and stderr accumulated so far, which is the only place a
- * startup failure describes itself: the child logs nothing to the runner's console, so a health
- * probe that gives up reports the child's own text instead of a bare timeout.
+ * `stdout()` and `output()` are separated deliberately: the startup records are asserted on the
+ * child's standard output alone, while a failure is explained with everything the child wrote —
+ * including the standard error a crash reports itself on. The startup case runs its child at `info`
+ * while the restart case runs its own at `silent`, so the level is a parameter of `startApi` rather
+ * than a property of the record.
  */
 interface ApiProcess {
   /** The spawned child running `src/main.ts`. */
   readonly child: ChildProcess;
   /** The port the child was told to bind through `PORT`. */
   readonly port: number;
-  /** Everything the child has written to stdout and stderr so far. */
+  /** Everything the child has written to standard output so far. */
+  stdout(): string;
+  /** Everything the child has written to standard output and standard error so far. */
   output(): string;
 }
 
@@ -140,10 +206,11 @@ interface ApiProcess {
 const startedProcesses: ApiProcess[] = [];
 
 /**
- * The temporary database both processes point at, or `null` before the test has created it. Held at
- * module scope so the teardown can remove it even when the test failed part-way through.
+ * Every temporary database the suite has created, in creation order, so the teardown can remove each
+ * one even when a test failed part-way through. Held at module scope for the same reason as the
+ * process list: the two cases create their own file, and neither directory may survive the run.
  */
-let temporaryDatabase: TempDatabase | null = null;
+const temporaryDatabases: TempDatabase[] = [];
 
 /** True once the child has exited, whether through an exit code or through a signal. */
 function hasExited(child: ChildProcess): boolean {
@@ -177,7 +244,7 @@ function waitForExit(child: ChildProcess, timeoutMilliseconds: number): Promise<
   });
 }
 
-/** Resolves after `milliseconds`; the health probe's pause, named so the loop reads as a loop. */
+/** Resolves after `milliseconds`; the probes' pause, named so each loop reads as a loop. */
 function delay(milliseconds: number): Promise<void> {
   return new Promise<void>((resolve) => {
     setTimeout(resolve, milliseconds);
@@ -254,43 +321,52 @@ function apiUrl(port: number, path: string): string {
  *
  * The child is this process's own Node executable — the same runtime the suite runs on — invoked
  * with `--import tsx` and `src/main.ts`, run from `backendRoot` because that relative entry path is
- * resolved against the child's working directory. `LOG_LEVEL` is `silent` so the child's startup
- * line does not interleave with the runner's output; `DATABASE_PATH` is the absolute temporary path
- * it must open. The standard streams are piped and accumulated rather than inherited, so the child
- * can stay quiet on success and still explain itself on failure.
+ * resolved against the child's working directory. `DATABASE_PATH` is the absolute temporary path it
+ * must open, and `LOG_LEVEL` is the level the caller asks for — `silent` by default, so the restart
+ * case's children do not interleave with the runner's output, and `info` for the startup-output
+ * case, whose record is written at that level. The standard streams are piped and accumulated rather
+ * than inherited, so the child can stay quiet on success and still explain itself on failure; stdout
+ * and stderr are kept apart because the startup records are read from stdout alone.
  *
  * @param port The port to bind, already reserved as free by `findFreePort`.
  * @param databasePath The absolute SQLite file the child must open.
+ * @param logLevel The logger level handed to the child through `LOG_LEVEL`.
  */
-function startApi(port: number, databasePath: string): ApiProcess {
+function startApi(
+  port: number,
+  databasePath: string,
+  logLevel: string = DEFAULT_LOG_LEVEL,
+): ApiProcess {
   const child = spawn(process.execPath, ['--import', 'tsx', 'src/main.ts'], {
     cwd: backendRoot,
     env: {
       ...process.env,
       PORT: String(port),
       DATABASE_PATH: databasePath,
-      LOG_LEVEL: 'silent',
+      LOG_LEVEL: logLevel,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
-  const output: string[] = [];
+  const standardOutput: string[] = [];
+  const standardError: string[] = [];
 
-  const collect = (chunk: string): void => {
-    output.push(chunk);
-  };
-
-  // Decoded as text on the way in: this output is only ever read back as a failure explanation, so
-  // there is nothing that would need the original bytes.
+  // Decoded as text on the way in: the output is read back as log records and as a failure
+  // explanation, so there is nothing that would need the original bytes.
   child.stdout?.setEncoding('utf8');
   child.stderr?.setEncoding('utf8');
-  child.stdout?.on('data', collect);
-  child.stderr?.on('data', collect);
+  child.stdout?.on('data', (chunk: string) => {
+    standardOutput.push(chunk);
+  });
+  child.stderr?.on('data', (chunk: string) => {
+    standardError.push(chunk);
+  });
 
   const record: ApiProcess = {
     child,
     port,
-    output: () => output.join(''),
+    stdout: () => standardOutput.join(''),
+    output: () => standardOutput.join('') + standardError.join(''),
   };
 
   startedProcesses.push(record);
@@ -307,6 +383,85 @@ function startApi(port: number, databasePath: string): ApiProcess {
 /** True for a JSON object, so a parsed response can be read field by field without a cast. */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Reads the child's standard output as the log records it has written so far.
+ *
+ * A record is one JSON object per line, so a line that is not a complete JSON object is a breach of
+ * the output contract rather than a slow process, and the offending line is what the failure
+ * reports. The text after the last newline is deliberately not read: a chunk boundary can leave the
+ * record being written incomplete, and a caller that polls will see it whole on the next attempt,
+ * where parsing it here would fail the case on the runner's timing rather than on the application's
+ * behaviour.
+ *
+ * @param text Everything the child has written to standard output so far.
+ */
+function readLogRecords(text: string): Record<string, unknown>[] {
+  // `split` always yields at least one element, the remainder after the last newline, so dropping it
+  // leaves exactly the lines that were terminated.
+  const completeLines = text.split('\n').slice(0, -1);
+
+  const records: Record<string, unknown>[] = [];
+
+  for (const line of completeLines) {
+    if (line.trim() === '') {
+      continue;
+    }
+
+    let parsed: unknown;
+
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      throw new Error(`Expected one JSON log record per line, received: ${line}\n${text}`);
+    }
+
+    if (!isRecord(parsed)) {
+      throw new Error(`Expected one JSON log record per line, received: ${line}\n${text}`);
+    }
+
+    records.push(parsed);
+  }
+
+  return records;
+}
+
+/** True for the records written at the level the startup line is written at. */
+function isStartupLevel(record: Record<string, unknown>): boolean {
+  return record['level'] === STARTUP_LEVEL;
+}
+
+/**
+ * Waits until the child has written a level-30 record, or fails with the child's own output.
+ *
+ * The record is written immediately after the bind completes, so it is normally already there by the
+ * time the health probe returns; polling is what makes the case independent of that ordering, and
+ * the deadline is what stops a child that binds but never logs from hanging the suite. A child that
+ * has exited can never write it, so that case fails at once with everything the child wrote.
+ *
+ * @param record The tracked child, whose accumulated standard output is polled.
+ */
+async function waitForStartupRecord(record: ApiProcess): Promise<void> {
+  const deadline = Date.now() + STARTUP_DEADLINE_MILLISECONDS;
+
+  while (Date.now() < deadline) {
+    if (hasExited(record.child)) {
+      throw new Error(
+        `The API process on port ${record.port} exited before writing a startup record.\n${record.output()}`,
+      );
+    }
+
+    if (readLogRecords(record.stdout()).some(isStartupLevel)) {
+      return;
+    }
+
+    await delay(STARTUP_POLL_INTERVAL_MILLISECONDS);
+  }
+
+  throw new Error(
+    `The API process on port ${record.port} wrote no level-${String(STARTUP_LEVEL)} record within ${String(STARTUP_DEADLINE_MILLISECONDS)} ms.\n${record.output()}`,
+  );
 }
 
 /** True for the three priority names the API accepts. */
@@ -497,10 +652,12 @@ describe('the API process restarted on one database file', () => {
       record.child.stderr?.destroy();
     }
 
-    // Removing the whole directory takes the database file and the `-wal`/`-shm` sidecars a child
+    // Removing each whole directory takes its database file and the `-wal`/`-shm` sidecars a child
     // killed mid-write leaves behind. `cleanup()` is idempotent and does not throw, so calling it
-    // after the test already disposed of the database is a no-op.
-    temporaryDatabase?.cleanup();
+    // after a test already disposed of its own database is a no-op.
+    for (const database of temporaryDatabases) {
+      database.cleanup();
+    }
 
     expect(lingering).toEqual([]);
   });
@@ -511,7 +668,7 @@ describe('the API process restarted on one database file', () => {
       // One database file for both processes: the second one is handed the same path, which is what
       // makes this a restart rather than a second isolated server.
       const database = createTempDatabase('restart-');
-      temporaryDatabase = database;
+      temporaryDatabases.push(database);
 
       const firstPort = await findFreePort();
       const first = startApi(firstPort, database.path);
@@ -557,6 +714,70 @@ describe('the API process restarted on one database file', () => {
       // and last-change instants the first process reported, unaltered by the restart.
       const read = await readTaskBody(readResponse);
       expect(read).toEqual(created);
+    },
+    TIMEOUT_MILLISECONDS,
+  );
+
+  it(
+    'writes exactly one startup record naming the address, the database path and the schema version',
+    async () => {
+      const database = createTempDatabase('startup-logging-');
+      temporaryDatabases.push(database);
+
+      const port = await findFreePort();
+      const record = startApi(port, database.path, STARTUP_LOG_LEVEL);
+
+      // The liveness answer is the readiness signal: the entry point composes the application,
+      // migrates the reserved file and binds before it can answer, so the startup line has been
+      // written — or is about to be — by the time this returns.
+      await waitForHealth(record);
+      await waitForStartupRecord(record);
+
+      // Then the output is allowed to settle and read again: a second record written just after the
+      // first — the framework's own banner is written a few microseconds before the application's
+      // line, and a startup line split across two chunks lands in the same window — must be inside
+      // the measurement, not after it.
+      await delay(SETTLE_MILLISECONDS);
+
+      const records = readLogRecords(record.stdout());
+      const startupRecords = records.filter(isStartupLevel);
+
+      // The requirement is one record, so the count is the assertion: two records of this level is
+      // the failure, whatever either of them carries.
+      expect(startupRecords).toHaveLength(1);
+
+      const startup = startupRecords.at(0);
+
+      if (startup === undefined) {
+        throw new Error(`Expected one startup record, received: ${record.stdout()}`);
+      }
+
+      // The single record is the one that names all three facts, each read from the process's own
+      // configuration and the schema the file was migrated to: the address the socket actually bound
+      // rather than the one requested, the file the child was handed, and the version a fresh path
+      // reaches.
+      expect(startup).toMatchObject({
+        msg: STARTUP_MESSAGE,
+        address: `127.0.0.1:${String(port)}`,
+        databasePath: database.path,
+        schemaVersion: FRESH_SCHEMA_VERSION,
+      });
+
+      // And the framework's own listening line, which reports the address and nothing else, must not
+      // be there beside it — the banner is what produced the second record.
+      const banners = records.filter(
+        (candidate) =>
+          typeof candidate['msg'] === 'string' && candidate['msg'].includes(FRAMEWORK_BANNER_TEXT),
+      );
+
+      expect(banners).toEqual([]);
+
+      // The process is still serving after all of the above, so the records counted belong to a
+      // running server rather than to one that logged and then died.
+      expect(hasExited(record.child)).toBe(false);
+
+      await stopApi(record);
+      expect(hasExited(record.child)).toBe(true);
     },
     TIMEOUT_MILLISECONDS,
   );

@@ -94,8 +94,10 @@ export default function App() {
   // already gone from the server removes it and shows the notice, and an edit form left open for a
   // task the server no longer holds would contradict the rule that the screen shows what the server
   // holds. Deriving it also means the target and the list can never disagree by a render, and a
-  // failed load cannot close a form the user is filling in, because the list is only replaced by a
-  // load that succeeded.
+  // failed load cannot clear the target: the hook keeps the tasks it last read, so the id still
+  // names a task in the list. That load's alert stands in the list's place, so the row — and the
+  // form inside it — is not rendered while the failure does, and returns with the row once a retry
+  // succeeds.
   const editingTaskId =
     requestedEditId !== null && tasks.some((task) => task.id === requestedEditId)
       ? requestedEditId
@@ -173,50 +175,59 @@ export default function App() {
     filters.status !== 'all' || filters.priority !== null || filters.sort !== 'createdAt';
 
   return (
-    <main className="app">
-      <h1>Tasks</h1>
+    <>
+      {/* The keyboard bypass, first in the document so it is the first Tab stop. It is a sibling
+          of `main` rather than a child of it: `.app > * + *` would otherwise give the heading
+          below an extra top margin. `TaskList`'s region is the target, focused on activation. */}
+      <a className="skipLink" href="#task-list">
+        Skip to task list
+      </a>
 
-      {/* Create. The form holds its own fields, so a list load, a list failure or a rejected save
-          never takes away what the user typed. */}
-      <section aria-labelledby={addTaskHeadingId}>
-        <h2 id={addTaskHeadingId}>Add a task</h2>
-        <TaskForm onSubmit={handleCreateSubmit} submitLabel="Add task" />
-      </section>
+      <main className="app">
+        <h1>Tasks</h1>
 
-      {/* Narrow the list. Each control reports the next filter set, which refetches the list; the
-          ordering itself is the server's, so this file computes none. */}
-      <section aria-labelledby={filterHeadingId}>
-        <h2 id={filterHeadingId}>Filter and sort</h2>
-        <FilterBar filters={filters} onChange={setFilters} />
-      </section>
+        {/* Create. The form holds its own fields, so a list load, a list failure or a rejected save
+            never takes away what the user typed. */}
+        <section aria-labelledby={addTaskHeadingId}>
+          <h2 id={addTaskHeadingId}>Add a task</h2>
+          <TaskForm onSubmit={handleCreateSubmit} submitLabel="Add task" />
+        </section>
 
-      {/* Outcomes that are not field errors — most importantly that the task an action named is
-          already gone from the server, which is why its item left the list. Announced politely and
-          without moving focus, and rendered only while there is something to report. */}
-      {notice !== null && (
-        <p className="notice" role="status" aria-live="polite">
-          {notice}
-        </p>
-      )}
+        {/* Narrow the list. Each control reports the next filter set, which refetches the list; the
+            ordering itself is the server's, so this file computes none. */}
+        <section aria-labelledby={filterHeadingId}>
+          <h2 id={filterHeadingId}>Filter and sort</h2>
+          <FilterBar filters={filters} onChange={setFilters} />
+        </section>
 
-      {/* The list region carries its own label so it is reachable as a region; the list element, its
-          items and their headings belong to the list itself. */}
-      <section aria-label="Task list">
-        <TaskList
-          tasks={tasks}
-          status={status}
-          error={error}
-          filtersActive={filtersActive}
-          editingTaskId={editingTaskId}
-          onRetry={retry}
-          onClearFilters={clearFilters}
-          onToggle={handleToggle}
-          onEdit={handleEdit}
-          onSave={handleSave}
-          onCancelEdit={handleCancelEdit}
-          onDelete={handleDelete}
-        />
-      </section>
-    </main>
+        {/* Outcomes that are not field errors — most importantly that the task an action named is
+            already gone from the server, which is why its item left the list. Announced politely and
+            without moving focus, and rendered only while there is something to report. */}
+        {notice !== null && (
+          <p className="notice" role="status" aria-live="polite">
+            {notice}
+          </p>
+        )}
+
+        {/* The list region carries its own label so it is reachable as a region; the list element, its
+            items and their headings belong to the list itself. */}
+        <section id="task-list" tabIndex={-1} aria-label="Task list">
+          <TaskList
+            tasks={tasks}
+            status={status}
+            error={error}
+            filtersActive={filtersActive}
+            editingTaskId={editingTaskId}
+            onRetry={retry}
+            onClearFilters={clearFilters}
+            onToggle={handleToggle}
+            onEdit={handleEdit}
+            onSave={handleSave}
+            onCancelEdit={handleCancelEdit}
+            onDelete={handleDelete}
+          />
+        </section>
+      </main>
+    </>
   );
 }

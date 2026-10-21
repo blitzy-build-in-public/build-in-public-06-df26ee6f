@@ -36,6 +36,10 @@ export function openDatabase(path: string): Database.Database {
     // file defaults: WAL lets a read proceed while a write commits, which keeps the list responsive
     // under that same last-write-wins rule, and foreign keys are enabled now even though this schema
     // has none, so a later migration that adds one does not silently lose enforcement.
+    // WAL keeps the log's index in a memory-mapped `-shm` file beside the database, so a `-shm` that
+    // becomes unwritable after startup — or a filesystem that cannot back the mapping — faults this
+    // process with SIGBUS rather than answering a 500, the failure `README.md`'s "Data and storage"
+    // section documents; the pragma stays because it lets a read proceed while a write commits.
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
 

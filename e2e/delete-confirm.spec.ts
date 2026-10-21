@@ -58,7 +58,14 @@ const CONFIRM_DIALOG_NAME = 'Delete task';
  */
 const MISSING_TASK_NOTICE = 'That task no longer exists.';
 
-/** The one list item whose text contains `title`. */
+/**
+ * The one list item whose text contains `title`.
+ *
+ * The item's own actions are addressed with an anchored name pattern — `/^Delete/`, `/^Edit/` — and
+ * not with the bare words: each control is named for the task it acts on (`Delete “<title>”`), and
+ * Playwright's name match is a substring one, so `'Delete'` would also answer with the item's Edit
+ * control whenever the task's title contains the word.
+ */
 function item(page: Page, title: string): Locator {
   return page.getByRole('listitem').filter({ hasText: title });
 }
@@ -94,7 +101,7 @@ test.describe('delete with a confirmation', () => {
 
     // The item's own Delete control only opens the confirmation: the request it is about to make is
     // issued by the dialog's confirm control and by nothing else.
-    const deleteControl = doomed.getByRole('button', { name: 'Delete' });
+    const deleteControl = doomed.getByRole('button', { name: /^Delete/ });
     await deleteControl.click();
 
     const dialog = confirmDialog(page);
@@ -127,7 +134,7 @@ test.describe('delete with a confirmation', () => {
     await page.goto('/');
 
     const doomed = item(page, DOOMED_TITLE);
-    const deleteControl = doomed.getByRole('button', { name: 'Delete' });
+    const deleteControl = doomed.getByRole('button', { name: /^Delete/ });
 
     // Opened from the keyboard: focusing the control and pressing Enter is the whole path, with no
     // pointer involved.
@@ -162,7 +169,7 @@ test.describe('delete with a confirmation', () => {
     // The task to delete carries a non-default priority, so its item shows a priority word as well
     // as its title — and the confirmed delete below takes the whole item away, tag included.
     await expect(doomed).toContainText('High');
-    await doomed.getByRole('button', { name: 'Delete' }).click();
+    await doomed.getByRole('button', { name: /^Delete/ }).click();
 
     const dialog = confirmDialog(page);
     await expect(dialog).toBeVisible();
@@ -234,6 +241,140 @@ test.describe('delete with a confirmation', () => {
     await expect(item(page, KEEPER_TITLE)).toBeVisible();
     expect((await listTasks(request)).map((task) => task.id)).toEqual([seeded.keeper.id]);
   });
+
+  test("Tab cycles between the confirmation's controls and never leaves the dialog", async ({
+    page,
+    request,
+  }) => {
+    await seedTasks(request);
+    await page.goto('/');
+
+    const doomed = item(page, DOOMED_TITLE);
+    await doomed.getByRole('button', { name: /^Delete/ }).click();
+
+    const dialog = confirmDialog(page);
+    await expect(dialog).toBeVisible();
+
+    // Opening the modal places focus on the dialog's first control, so a keyboard user reaches both
+    // choices without tabbing through the page behind it.
+    const cancel = dialog.getByRole('button', { name: 'Cancel' });
+    const confirm = dialog.getByRole('button', { name: 'Delete' });
+    await expect(cancel).toBeFocused();
+
+    await page.keyboard.press('Tab');
+    await expect(confirm).toBeFocused();
+
+    // Tab on the last control wraps back to the first rather than leaving the dialog for a stop on
+    // document.body, at which the dialog is no longer the active element and no focus ring is drawn.
+    await page.keyboard.press('Tab');
+    await expect(cancel).toBeFocused();
+
+    // Shift+Tab on the first control wraps to the last: the same cycle at its other end.
+    await page.keyboard.press('Shift+Tab');
+    await expect(confirm).toBeFocused();
+
+    // Both ends held: focus stayed inside the dialog through every press, and none of them dismissed
+    // it or touched the task.
+    await expect
+      .poll(() => dialog.evaluate((element) => element.contains(document.activeElement)))
+      .toBe(true);
+    await expect(dialog).toBeVisible();
+    await expect(doomed).toBeVisible();
+    expect(await listTasks(request)).toHaveLength(2);
+  });
+
+  test('the card keeps the confirmation open, and only the backdrop outside it dismisses', async ({
+    page,
+    request,
+  }) => {
+    await seedTasks(request);
+    await page.goto('/');
+
+    const doomed = item(page, DOOMED_TITLE);
+    const deleteControl = doomed.getByRole('button', { name: /^Delete/ });
+    await deleteControl.click();
+
+    const dialog = confirmDialog(page);
+    await expect(dialog).toBeVisible();
+
+    // Read from the dialog's own box rather than from a fixed point, so the two clicks below are the
+    // card's own padding and the backdrop at whatever viewport the suite runs at.
+    const box = await dialog.boundingBox();
+
+    if (box === null) {
+      throw new Error('The open confirmation reported no bounding box to click inside.');
+    }
+
+    // Inside the card, on no control: the card's left padding, eight pixels in from its edge. It
+    // dismisses nothing, which is what lets the second click of a rapid double-click on a row's
+    // Delete land on the card the first one opened without silently cancelling the confirmation.
+    await page.mouse.click(box.x + 8, box.y + box.height / 2);
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText(DOOMED_TITLE);
+    await expect(doomed).toBeVisible();
+    expect(await listTasks(request)).toHaveLength(2);
+
+    // The backdrop: half-way along the gutter the card is centred in, which is outside the card at
+    // every viewport this suite runs at.
+    await page.mouse.click(box.x / 2, box.y + box.height / 2);
+    await expect(dialog).toBeHidden();
+
+    // A backdrop dismissal is a cancellation like any other: both tasks survive it, and focus
+    // returns to the control that opened the dialog.
+    await expect(doomed).toBeVisible();
+    await expect(item(page, KEEPER_TITLE)).toBeVisible();
+    expect(await listTasks(request)).toHaveLength(2);
+    await expect(deleteControl).toBeFocused();
+  });
+
+  test("a repeated press of the gesture that opened the confirmation does not cancel it", async ({
+    page,
+    request,
+  }) => {
+    await seedTasks(request);
+    await page.goto('/');
+
+    const doomed = item(page, DOOMED_TITLE);
+    const deleteControl = doomed.getByRole('button', { name: /^Delete/ });
+
+    // The press that asks for the confirmation.
+    await deleteControl.click();
+
+    const dialog = confirmDialog(page);
+    await expect(dialog).toBeVisible();
+
+    const box = await dialog.boundingBox();
+
+    if (box === null) {
+      throw new Error('The open confirmation reported no bounding box to press outside of.');
+    }
+
+    // The press that repeats it, delivered where the pointer rests once the dialog has opened —
+    // outside the card, on the backdrop. A browser reports the second press of a rapid double-click
+    // on a row's Delete as one click whose `detail` is 2, whatever that repeat press lands on, and it
+    // must not dismiss the confirmation the press before it asked for: that silent cancellation is
+    // the behaviour this case exists to prevent. `down`/`up` carry that count; `click` would send a
+    // first press instead, which is a different gesture from the one under test.
+    await page.mouse.move(box.x / 2, box.y + box.height / 2);
+    await page.mouse.down({ clickCount: 2 });
+    await page.mouse.up({ clickCount: 2 });
+
+    await expect(page.locator('dialog[open]')).toHaveCount(1);
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText(DOOMED_TITLE);
+    await expect(doomed).toBeVisible();
+    expect(await listTasks(request)).toHaveLength(2);
+
+    // The confirmation is still whole and still dismissable: one deliberate press on the backdrop
+    // closes it without deleting, and both tasks survive.
+    await page.mouse.click(box.x / 2, box.y + box.height / 2);
+    await expect(page.locator('dialog[open]')).toHaveCount(0);
+    await expect(doomed).toBeVisible();
+    await expect(item(page, KEEPER_TITLE)).toBeVisible();
+    expect(await listTasks(request)).toHaveLength(2);
+    await expect(deleteControl).toBeFocused();
+  });
+
 });
 
 /** The two tasks every test works with: the one to delete, and the one that must survive it. */

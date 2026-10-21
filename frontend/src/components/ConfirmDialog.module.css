@@ -8,6 +8,7 @@
  * Class map — the whole of this module's contract with ConfirmDialog.tsx:
  *
  *   .dialog    the <dialog> box itself, and the ::backdrop of its modal state
+ *   .content   the wrapper filling that box, which carries the card's padding
  *   .title     the <h2> naming the task about to be deleted
  *   .message   the <p> carrying the confirmation copy
  *   .actions   the row holding the two controls
@@ -39,7 +40,11 @@
      where they could no longer be reached. */
   max-block-size: calc(100% - (2 * var(--page-padding-inline)));
   overflow-y: auto;
-  padding: var(--space-5);
+  /* No padding of its own: the .content wrapper below fills this box and carries the padding
+     instead, so a click on the card is a click on that wrapper or on one of its descendants.
+     Only a click on the ::backdrop reaches the element itself as the event target, which is
+     what identifies it as a click outside the card. */
+  padding: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background-color: var(--color-surface);
@@ -53,6 +58,14 @@
 
 .dialog::backdrop {
   background-color: rgb(0 0 0 / 0.45);
+}
+
+/* The card's inner box. It carries the padding the <dialog> itself used to hold — the same value
+   from the same token, so the card's size, rounding, background and inner spacing are unchanged
+   by the move — while covering the whole of the dialog's box, which is what keeps a click
+   anywhere on the card from reaching the dialog element and reading as a click outside it. */
+.content {
+  padding: var(--space-5);
 }
 
 .title {
@@ -75,18 +88,18 @@
 }
 
 /* The two controls, given the same treatment as every other secondary button in the
-   interface (TaskForm.module.css and TaskList.module.css): surface fill, --color-border
-   hairline, --radius-md, and a block-size floor written in the shared spacing scale so
-   the target stays comfortable on a touch screen. min-inline-size: 0 stops a long label
-   from forcing the dialog wider than the viewport, and the row wraps onto a second line
-   when the two labels no longer fit side by side — at no width is either control shrunk,
-   truncated or hidden. */
+   interface (TaskForm.module.css and TaskList.module.css): surface fill, the control-boundary
+   hairline, --radius-md, and a block-size floor written in the shared spacing scale so the
+   target stays comfortable on a touch screen. min-inline-size: 0 stops a long label from
+   forcing the dialog wider than the viewport, and the row wraps onto a second line when the
+   two labels no longer fit side by side — at no width is either control shrunk, truncated or
+   hidden. */
 .dialog button {
   min-inline-size: 0;
   min-block-size: calc(var(--space-6) + var(--space-3));
   padding-block: var(--space-2);
   padding-inline: var(--space-4);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-control);
   border-radius: var(--radius-md);
   background-color: var(--color-surface);
   color: var(--color-text);

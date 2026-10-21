@@ -61,16 +61,17 @@
   box-sizing: border-box;
   font: inherit;
   padding: var(--space-3);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-control);
   border-radius: var(--radius-md);
   background-color: var(--color-surface);
   color: var(--color-text);
 }
 
-/* A zero flex-basis is what puts the three controls on one row from 480px: a control's base
-   size is then nothing rather than the width of its longest option, so all three always fit
-   the line and grow into an equal share of it. `flex-wrap: wrap` on `.bar` stays as the
-   guard — a child that cannot shrink below its content still wraps rather than overflowing. */
+/* One row from 480px, sized from what each control has to show rather than from an equal
+   third of the line: `flex: 1 1 auto` gives a control its own longest option as its basis and
+   then shares the spare space equally, so no select ends up narrower than the value it
+   displays. `min-inline-size: 0` still lets a control shrink rather than overflow the page,
+   and `flex-wrap: wrap` on `.bar` stays as the guard. */
 @media (min-width: 480px) {
   .bar {
     flex-direction: row;
@@ -79,7 +80,14 @@
   }
 
   .control {
-    flex: 1 1 0;
+    flex: 1 1 auto;
     min-inline-size: 0;
+  }
+
+  /* The base rule's block padding stays; only the inline padding tightens, to the tightest
+     published step, because at 480px the row is just wide enough for the three controls'
+     natural widths and the two gaps between them. */
+  .select {
+    padding-inline: var(--space-1);
   }
 }

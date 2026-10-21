@@ -17,7 +17,10 @@
  *   task has disappeared) is expressed as a change to that effect's dependencies, each trigger
  *   taking the next sequence number. A load shows as `'loading'` for as long as the newest request
  *   has not answered, which is a fact derived from the sequence number the last answer recorded
- *   rather than a flag set alongside the request.
+ *   rather than a flag set alongside the request. The effect runs no request for a load it has
+ *   already started, so the duplicate run `StrictMode` makes of every effect in development issues
+ *   one request rather than two; the record of the newest load started lives outside the effect run,
+ *   so the request the first of the two runs began is still the one whose answer is applied.
  * - A failed action never touches the load state. `error` is non-null only while `status` is
  *   `'error'`, which the list renders as its retryable whole-list failure; writing an action's
  *   failure there would replace the user's list with an error screen while their form is still
@@ -67,6 +70,25 @@ interface CompletedLoad {
   sequence: number;
   /** That load's outcome: a list was read, or the read failed. */
   status: 'ready' | 'error';
+}
+
+/**
+ * The newest list load the effect has started: the sequence number it was stamped with, the client
+ * that served it and the filters it was asked to apply.
+ *
+ * Held outside the effect run so it outlives a single run. It does two jobs at once: an effect run
+ * that names a load identical to this one is a repeat of a load already under way and starts no
+ * second request — which is what keeps the duplicate run `StrictMode` makes of every effect in
+ * development to a single request — and an answer is applied only while this record still describes
+ * the load that answer belongs to, so a superseded answer is discarded exactly as before.
+ */
+interface StartedLoad {
+  /** The sequence number of the load under way. */
+  sequence: number;
+  /** The client the load's request went to. */
+  api: TaskApi;
+  /** The filters the load asked the server to apply. */
+  filters: TaskFilters;
 }
 
 /** Which of the three list states the hook is in. */
@@ -135,6 +157,12 @@ export function useTasks(api: TaskApi): UseTasksResult {
   // state update would need.
   const actionFailureRef = useRef<unknown>(null);
 
+  // The newest load the effect has started. A ref, not state, because it has to outlive a single
+  // effect run: the duplicate run `StrictMode` makes of every effect in development reads it to
+  // recognise a load already under way, and every answer reads it to learn whether it still
+  // describes the load in force.
+  const startedLoadRef = useRef<StartedLoad | null>(null);
+
   // A load is in flight until an answer arrives for the request the current sequence number stamps:
   // nothing has answered yet, or the only answer so far describes a load with an earlier number.
   const status: UseTasksStatus =
@@ -150,41 +178,49 @@ export function useTasks(api: TaskApi): UseTasksResult {
    * The one list load: a single request per trigger, and a single place `status` moves to `'ready'`
    * or `'error'`.
    *
-   * The sequence number of the run that started this request is captured here, so each outcome the
-   * request produces carries the load it answers: a later trigger stamps a later number, and only
-   * an answer carrying the number the screen is waiting on moves `status` off `'loading'`.
-   *
-   * `ignore` is what makes the effect safe to tear down: an answer to a superseded request — a
-   * filter changed while it was in flight, or the second mount under `StrictMode` in development —
-   * must never describe the request the screen is now waiting on. `listTasks` takes no
-   * `AbortSignal`, so discarding the answer is the only way to abandon a request's result.
+   * `startedLoadRef` names the load under way, which lets this run do two things the closure around a
+   * single run could not. A run naming a load identical to the one already recorded — the repeat of
+   * a load that is the second of the two runs `StrictMode` makes of every effect in development —
+   * starts no request and leaves the load to the run that began it. An answer is applied only while
+   * the record still names the load it answers: a later trigger stamps a later number and takes the
+   * record, so an answer to a superseded request — a filter changed while it was in flight — never
+   * describes the request the screen is now waiting on. `listTasks` takes no `AbortSignal`, so
+   * discarding the answer is the only way to abandon a request's result.
    */
   useEffect(() => {
-    let ignore = false;
+    const started = startedLoadRef.current;
 
-    const sequence = loadSequence;
+    if (
+      started !== null &&
+      started.sequence === loadSequence &&
+      started.api === api &&
+      started.filters === filters
+    ) {
+      // The load this run would start is already under way. The run that began it owns the request
+      // and applies its answer, so this repeat starts nothing.
+      return;
+    }
+
+    const load: StartedLoad = { sequence: loadSequence, api, filters };
+    startedLoadRef.current = load;
 
     api.listTasks(filters).then(
       (loaded) => {
-        if (ignore) {
+        if (startedLoadRef.current !== load) {
           return;
         }
         setTasks(loaded);
-        setCompletedLoad({ sequence, status: 'ready' });
+        setCompletedLoad({ sequence: load.sequence, status: 'ready' });
       },
       () => {
-        if (ignore) {
+        if (startedLoadRef.current !== load) {
           return;
         }
         // The tasks already on screen are kept: only the load state changes, so a retry has a list
         // to fall back on and the failure object itself is never put into state.
-        setCompletedLoad({ sequence, status: 'error' });
+        setCompletedLoad({ sequence: load.sequence, status: 'error' });
       },
     );
-
-    return () => {
-      ignore = true;
-    };
   }, [api, filters, loadSequence]);
 
   /** Asks the effect above for another load, leaving the active filters in place. */

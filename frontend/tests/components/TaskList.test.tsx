@@ -5,9 +5,11 @@
  * Three things this file exists to pin. First, the states are mutually exclusive and chosen by
  * `status` and `filtersActive` alone: an account with no tasks invites the user to add one, a filter
  * that matched nothing says exactly that and offers the way back, a load in flight announces itself
- * politely, and a load that failed shows a retryable alert — never two of them at once, and never the
- * empty state standing in for the filtered one. Second, the list adds nothing of its own: it renders
- * the array it was handed in the order it was handed it, fetches nothing, filters nothing, and binds
+ * politely, and a load that failed shows a retryable alert — never two of them at once, never the
+ * empty state standing in for the filtered one, and never the rows a failed load invalidated
+ * standing under its alert, while a load in flight, which is not a failure, leaves those rows
+ * readable. Second, the list adds nothing of its own: it renders the array it was handed in the
+ * order it was handed it, fetches nothing, filters nothing, and binds
  * each row's actions to that row's id, which is why the handler assertions here name ids rather than
  * merely counting calls. Third, a row costs what the row shows: no delete confirmation is mounted
  * anywhere in the list until a row's Delete control is pressed, which is read off the document
@@ -251,6 +253,51 @@ describe('TaskList', () => {
       expect(onRetry).toHaveBeenCalledTimes(1);
     });
 
+    it('holds back the rows a failed load invalidated, so both failure paths render alike', async () => {
+      const user = userEvent.setup();
+      const completed = makeTask({ title: 'Book dentist', completed: true });
+      const open = makeTask({ title: 'Buy milk' });
+      const { onRetry } = renderList({
+        tasks: [completed, open],
+        status: 'error',
+        error: SERVER_ERROR_MESSAGE,
+      });
+
+      // The rows the handed tasks would render are absent: a failure invalidates them for the filters
+      // in force, so a failed refetch renders what the initial-load failure renders — the alert, and
+      // nothing beneath it.
+      const alert = screen.getByRole('alert');
+      expect(alert).toHaveTextContent(SERVER_ERROR_MESSAGE);
+      expect(screen.queryByRole('list')).toBeNull();
+      expect(screen.queryAllByRole('listitem')).toHaveLength(0);
+      expect(screen.queryByRole('status')).toBeNull();
+      expect(screen.queryByText(EMPTY_STATE_MESSAGE)).toBeNull();
+      expect(screen.queryByText(NO_MATCHES_MESSAGE)).toBeNull();
+
+      await user.click(within(alert).getByRole('button', { name: RETRY_LABEL }));
+
+      expect(onRetry).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the rows readable while a load is in flight', () => {
+      const dentist = makeTask({ title: 'Book dentist' });
+      const milk = makeTask({ title: 'Buy milk' });
+      renderList({ tasks: [dentist, milk], status: 'loading' });
+
+      // Only a failure takes the rows away: a load in flight announces itself politely and leaves
+      // what was already read on screen, in the order the caller supplied it.
+      expect(screen.getByRole('status')).toHaveTextContent(LOADING_MESSAGE);
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(screen.queryByText(EMPTY_STATE_MESSAGE)).toBeNull();
+      expect(screen.queryByText(NO_MATCHES_MESSAGE)).toBeNull();
+
+      const renderedTitles = screen
+        .getAllByRole('listitem')
+        .map((item) => within(item).getByRole('heading').textContent);
+
+      expect(renderedTitles).toEqual([dentist.title, milk.title]);
+    });
+
     it("prefers the caller's failure message to its own sentence", () => {
       renderList({ status: 'error', error: SERVER_ERROR_MESSAGE });
 
@@ -363,7 +410,9 @@ describe('TaskList', () => {
       // of 1,000 permanently mounted closed dialog subtrees.
       expect(document.querySelectorAll('dialog')).toHaveLength(0);
 
-      await user.click(within(itemFor(dentist.title)).getByRole('button', { name: 'Delete' }));
+      await user.click(
+        within(itemFor(dentist.title)).getByRole('button', { name: 'Delete “Book dentist”' }),
+      );
 
       // Exactly one, for the row whose Delete control was pressed: the dialog is now open — which is
       // what puts it back within reach of the role query — and it names that row's task.
@@ -371,6 +420,39 @@ describe('TaskList', () => {
       expect(document.querySelectorAll('dialog')).toHaveLength(1);
       expect(dialog).toHaveAttribute('open');
       expect(dialog).toHaveTextContent(dentist.title);
+    });
+
+    it("names each row's Edit and Delete control distinctly, for that row's task", () => {
+      const milk = makeTask({ title: 'Buy milk' });
+      const dentist = makeTask({ title: 'Book dentist' });
+      renderList({ tasks: [milk, dentist] });
+
+      // Asked of the whole screen rather than of a row, so it is the announced name that locates the
+      // control: the visible word alone is the same on every row, and a name carrying the task's
+      // title is what distinguishes one row's Edit from another's. A name that had not changed would
+      // find nothing here, and one shared with another row would match two controls at once.
+      for (const title of [milk.title, dentist.title]) {
+        expect(screen.getByRole('button', { name: `Edit “${title}”` })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: `Delete “${title}”` })).toBeInTheDocument();
+      }
+
+      // The name belongs to the row that shows the task: inside that row's own item the control
+      // answers to it, and the other row's task title finds nothing there.
+      expect(
+        within(itemFor(milk.title)).getByRole('button', { name: 'Edit “Buy milk”' }),
+      ).toBeInTheDocument();
+      expect(
+        within(itemFor(milk.title)).queryByRole('button', { name: 'Edit “Book dentist”' }),
+      ).toBeNull();
+
+      // The two rows' names are not equal — each Edit control is a separate button named for its own
+      // task — and no control answers to the bare visible word, which is the indistinct census this
+      // case exists to prevent.
+      expect(screen.getByRole('button', { name: 'Edit “Buy milk”' })).not.toBe(
+        screen.getByRole('button', { name: 'Edit “Book dentist”' }),
+      );
+      expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
     });
   });
 
@@ -399,7 +481,9 @@ describe('TaskList', () => {
       const second = makeTask({ title: 'Book dentist' });
       const { onEdit, onDelete } = renderList({ tasks: [first, second] });
 
-      await user.click(within(itemFor(second.title)).getByRole('button', { name: 'Edit' }));
+      await user.click(
+        within(itemFor(second.title)).getByRole('button', { name: 'Edit “Book dentist”' }),
+      );
 
       expect(onEdit).toHaveBeenCalledTimes(1);
       expect(onEdit).toHaveBeenCalledWith(second.id);
@@ -472,7 +556,9 @@ describe('TaskList', () => {
       const task = makeTask({ title: 'Buy milk' });
       const { onDelete } = renderList({ tasks: [task] });
 
-      await user.click(within(itemFor(task.title)).getByRole('button', { name: 'Delete' }));
+      await user.click(
+        within(itemFor(task.title)).getByRole('button', { name: 'Delete “Buy milk”' }),
+      );
 
       const dialog = await screen.findByRole('dialog');
       expect(dialog).toHaveTextContent(task.title);

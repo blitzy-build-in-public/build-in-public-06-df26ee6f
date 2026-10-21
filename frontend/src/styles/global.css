@@ -17,7 +17,8 @@
  * ConfirmDialog). Rename nothing here without updating them.
  *
  *   Colour    --color-surface  --color-surface-muted  --color-text  --color-text-muted
- *             --color-border   --color-accent  --color-on-accent  --color-danger
+ *             --color-border   --color-border-control  --color-accent  --color-on-accent
+ *             --color-danger
  *   Priority  --color-priority-low  --color-priority-medium  --color-priority-high
  *   Spacing   --space-1 --space-2 --space-3 --space-4 --space-5 --space-6 --space-7
  *   Radius    --radius-sm --radius-md --radius-lg --radius-full
@@ -30,8 +31,9 @@
  *   Motion    --transition-duration
  *
  * Global classes — only these three; component-scoped names live in *.module.css:
- *   .app     the page shell: full width, page gutter, capped and centred from 768px
- *   .notice  the region reporting outcomes that are not field errors
+ *   .app       the page shell: full width, page gutter, capped and centred from 768px
+ *   .notice    the region reporting outcomes that are not field errors
+ *   .skipLink  the keyboard bypass: off-screen until focused, then pinned to the corner
  */
 
 :root {
@@ -41,6 +43,13 @@
   --color-text: #1f2328;
   --color-text-muted: #5c6672;
   --color-border: #d0d7de;
+  /* The boundary of an interactive control. Unlike a container border, a control's boundary
+     carries the WCAG 1.4.11 obligation: at 1.45:1 against the white control fill, #d0d7de is
+     too faint to identify the control, and the fill itself contrasts only 1.09:1 with the
+     muted card, so this boundary is the control's sole identifier. #767676 measures 4.54:1 on
+     white, 4.17:1 on the muted card and 4.08:1 on the error tint, and is the user agent's own
+     control border, so the whole control family reads as one grey. */
+  --color-border-control: #767676;
   --color-accent: #1d4ed8;
   /* Text drawn on an accent-filled control, so the accent is usable as a button fill. */
   --color-on-accent: #ffffff;
@@ -215,8 +224,8 @@ h2 {
   }
 }
 
-/* Page shell. .app and .notice are the only global classes; every other class name in
-   the interface is scoped to its component module. */
+/* Page shell. .app, .notice and .skipLink are the only global classes; every other class
+   name in the interface is scoped to its component module. */
 
 .app {
   width: 100%;
@@ -263,6 +272,44 @@ h2 {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background-color: var(--color-surface-muted);
+}
+
+/* Keyboard bypass. The list can hold dozens of rows, so a keyboard user is offered a way to
+   skip the eight form and filter controls ahead of it. Until it is focused the link is
+   off-screen and paints nothing, yet it keeps a 1px `clip-path` box rather than `display: none`
+   so it stays in the tab order; on focus it is pinned inside the viewport's top corner.
+   `:focus` rather than `:focus-visible` on purpose: a focused control must never be invisible,
+   and the shared ring below still draws on it. */
+
+.skipLink {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  /* A 1px box at the origin cannot reach past any viewport edge. */
+  inline-size: 1px;
+  block-size: 1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.skipLink:focus {
+  /* Fixed rather than absolute, so the revealed link is placed against the viewport and
+     cannot be scrolled out of reach. */
+  position: fixed;
+  inset-block-start: var(--space-2);
+  inset-inline-start: var(--space-2);
+  inline-size: auto;
+  block-size: auto;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-surface);
+  overflow: visible;
+  clip-path: none;
+  z-index: 1;
 }
 
 /* Focus. This single rule keeps a visible indicator on every interactive element;

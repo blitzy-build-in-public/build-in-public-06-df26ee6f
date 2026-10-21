@@ -14,10 +14,13 @@
  * the thing under test.
  *
  * Two conventions keep the assertions honest. Every refetch is asserted with a call-count *delta*
- * and `toHaveBeenLastCalledWith`, never an exact total, because React may double-invoke the mount
- * effect. And the 404 cases hold the next list answer open, so a task leaving the list can only be
- * the hook's own removal rather than the arrival of a fresh server list.
+ * and `toHaveBeenLastCalledWith` rather than an exact total, so an assertion names the request it
+ * is about without depending on how many requests earlier steps made. And the 404 cases hold the
+ * next list answer open, so a task leaving the list can only be the hook's own removal rather than
+ * the arrival of a fresh server list.
  */
+
+import { StrictMode } from 'react';
 
 import { act, renderHook, waitFor } from '@testing-library/react';
 
@@ -272,6 +275,31 @@ describe('the first load', () => {
     });
     expect(api.listTasks).toHaveBeenLastCalledWith(ACTIVE_FILTERS);
     expect(result.current.tasks).toEqual(reloaded);
+  });
+});
+
+/**
+ * `main.tsx` mounts the application inside `StrictMode`, which deliberately runs every effect twice
+ * on mount in development. The list effect has to recognise the second run and start no request for
+ * it, while the answer to the request the first run began is still applied by the load it belongs
+ * to: a run that only stopped starting requests would leave the list loading for ever, so this case
+ * asserts both halves — one request for the mount, and the server's list showing.
+ */
+describe('a mount under StrictMode', () => {
+  it('starts the list once and still reaches ready with the server list', async () => {
+    const first = makeTask({ id: TASK_ID });
+    const second = makeTask({ id: OTHER_TASK_ID });
+    serverTasks = [first, second];
+
+    const { result } = renderHook(() => useTasks(api), { wrapper: StrictMode });
+
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready');
+    });
+
+    expect(api.listTasks).toHaveBeenCalledTimes(1);
+    expect(api.listTasks).toHaveBeenLastCalledWith(DEFAULT_FILTERS);
+    expect(result.current.tasks).toEqual([first, second]);
   });
 });
 
@@ -706,6 +734,47 @@ describe('the filters', () => {
       expect(result.current.status).toBe('ready');
     });
     expect(result.current.tasks).toEqual(reloaded);
+  });
+
+  it('keeps the newest list when an older request answers after it', async () => {
+    const { result } = await renderReady([makeTask({ id: TASK_ID })]);
+
+    // Two answers are held at once — the shared helper holds only one — because this case is about
+    // the order the two land in, not about which request is outstanding.
+    const held: Array<(tasks: Task[]) => void> = [];
+    api.listTasks.mockImplementation(
+      () =>
+        new Promise<Task[]>((resolve) => {
+          held.push(resolve);
+        }),
+    );
+
+    await performVoid(() => result.current.setFilters(ACTIVE_FILTERS));
+    await performVoid(() => result.current.setFilters(DEFAULT_FILTERS));
+
+    const older = held[0];
+    const newer = held[1];
+    if (older === undefined || newer === undefined) {
+      throw new Error('Both filter loads were expected to be in flight.');
+    }
+    expect(result.current.status).toBe('loading');
+
+    // The newer load answers first, and its list is the one the screen shows.
+    const settled = [makeTask({ id: OTHER_TASK_ID })];
+    await act(async () => {
+      newer([...settled]);
+    });
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready');
+    });
+    expect(result.current.tasks).toEqual(settled);
+
+    // The older answer lands after it and is discarded, so the newer list still stands.
+    await act(async () => {
+      older([makeTask({ id: GONE_TASK_ID })]);
+    });
+    expect(result.current.status).toBe('ready');
+    expect(result.current.tasks).toEqual(settled);
   });
 });
 

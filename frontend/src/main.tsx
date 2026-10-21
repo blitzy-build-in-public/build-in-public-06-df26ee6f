@@ -28,8 +28,9 @@ if (rootElement === null) {
 }
 
 // `StrictMode` is React's convention for an application entry. It deliberately double-invokes effects
-// in development, which is why the list effect in `state/useTasks.ts` must be cleanup-safe: it has to
-// discard the result of a superseded load instead of assuming it runs once.
+// in development, which is why the list effect in `state/useTasks.ts` recognises the duplicate run and
+// starts no second request for the same load; an answer to a superseded load is still discarded by the
+// load it belongs to.
 createRoot(rootElement).render(
   <StrictMode>
     <App />

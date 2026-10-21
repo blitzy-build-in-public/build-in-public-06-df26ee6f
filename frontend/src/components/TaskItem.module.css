@@ -110,8 +110,17 @@
 }
 
 /* The label carries the task title, so it can be as long as one: it wraps like the title
-   rather than widening the card. */
+   rather than widening the card. It is also the completion control's clickable target —
+   `htmlFor` binds it to the checkbox, whose native box renders at roughly 13px square —
+   so the pair needs a floor of its own, and a minimum block size has no effect on an
+   inline box: the label becomes a flex container instead. Its text is one anonymous item
+   that still inherits `overflow-wrap: anywhere`, so a 200-character title keeps wrapping
+   rather than widening the card, and `.completion input { flex: none }` still protects
+   the box. The block size is the same 48px token the row actions use above. */
 .checkboxLabel {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--space-7);
   overflow-wrap: anywhere;
 }
 
@@ -129,7 +138,7 @@
   min-block-size: var(--space-7);
   padding-block: var(--space-2);
   padding-inline: var(--space-3);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-control);
   border-radius: var(--radius-sm);
   background-color: var(--color-surface);
   color: var(--color-text);

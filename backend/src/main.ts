@@ -11,9 +11,11 @@
  *
  * Two exports serve two callers. `composeApp` builds the graph without listening, which is what the
  * integration tests drive a temporary database file with; `main` reads the environment and starts
- * the process. Importing this module must bind nothing and start nothing, because the tests import
- * `composeApp` and the coverage run loads every source file, so `main` runs only when the process
- * was launched with this file as its entry point.
+ * the process, binding the underlying server rather than calling the framework's own `listen` —
+ * that call writes a listening record of its own beside the application's, and the process's own
+ * startup line has to be the only one. Importing this module must bind nothing and start nothing,
+ * because the tests import `composeApp` and the coverage run loads every source file, so `main` runs
+ * only when the process was launched with this file as its entry point.
  */
 import type { AddressInfo } from 'node:net';
 import { pathToFileURL } from 'node:url';
@@ -187,10 +189,12 @@ export async function composeApp(
 /**
  * Reads the configuration from the environment and starts the API process.
  *
- * This is the module's only process-level behaviour: compose the application, bind the socket, log
- * where it came up. A startup failure — an unusable database file, a port already in use — is left
- * to reject out of this function, so it surfaces rather than being swallowed, and nothing here
- * calls `process.exit`.
+ * This is the module's only process-level behaviour: compose the application, bring it ready, bind
+ * the socket, log where it came up. The socket is bound on the underlying server rather than through
+ * the framework's own `listen`, whose listening record would be a second startup line beside the one
+ * log call at the end of this function; that call is the process's only account of its startup. A
+ * startup failure — an unusable database file, a port already in use — is left to reject out of this
+ * function, so it surfaces rather than being swallowed, and nothing here calls `process.exit`.
  */
 export async function main(): Promise<void> {
   // Every variable is read through a reader that treats a present-but-blank value as absent, so
@@ -204,9 +208,29 @@ export async function main(): Promise<void> {
 
   const { app } = await composeApp(config);
 
-  // Loopback only: the application is single-user and local by requirement, so it is reachable from
-  // this machine and from nowhere else, and no route needs a credential.
-  await app.listen({ port: config.port, host: '127.0.0.1' });
+  // `ready()` first, so every route, hook and plugin is in place before the port accepts anything;
+  // it is what the framework's own `listen` calls internally before it binds.
+  await app.ready();
+
+  // The bind itself is awaited here rather than through `app.listen(...)`, because that call writes
+  // a listening record of its own naming the address, and the log call below has to be the process's
+  // only startup line. `listen`'s callback is a `listening` listener that never receives an error,
+  // so the error listener — live only for the duration of the bind — is what turns a failure such as
+  // an occupied port into a rejection of this promise.
+  await new Promise<void>((resolve, reject) => {
+    const onBindError = (error: Error): void => {
+      reject(error);
+    };
+
+    app.server.once('error', onBindError);
+
+    // Loopback only: the application is single-user and local by requirement, so it is reachable
+    // from this machine and from nowhere else, and no route needs a credential.
+    app.server.listen({ port: config.port, host: '127.0.0.1' }, () => {
+      app.server.off('error', onBindError);
+      resolve();
+    });
+  });
 
   // The one startup log line: where the API is bound, which file holds the data and which schema
   // version that file carries — the operator's answer to all three questions. Nothing else in this
