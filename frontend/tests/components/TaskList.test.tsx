@@ -25,9 +25,8 @@
  * The clock is fixed at 14 February 2026 because `TaskItem` asks `isOverdue` what "today" is: a suite
  * left on the wall clock would flag a different set of fixtures tomorrow than it does today.
  *
- * This project has no user rules to cite — `review_rules` reports none — so what governs the file is
- * the request's own contract: the states of AAP 0.6.2, the one-ordering rule of AAP 0.6.3, the
- * props contract of AAP 0.7.1 and the jsdom-only layer of AAP 0.10.2.
+ * What governs the file is the request's own contract: the states of AAP 0.6.2, the one-ordering
+ * rule of AAP 0.6.3, the props contract of AAP 0.7.1 and the jsdom-only layer of AAP 0.10.2.
  */
 
 import userEvent from '@testing-library/user-event';

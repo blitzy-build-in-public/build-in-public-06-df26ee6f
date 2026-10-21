@@ -24,9 +24,8 @@
  *
  * `frontend/tests/support/helpers.tsx` supplies the render helper, the user-facing queries and the
  * task builder; the fixed date below makes the overdue cases deterministic rather than dependent on
- * the day the suite happens to run. This project has no user rules to cite — `review_rules` reports
- * none — so what governs the file is the behaviour above, strict TypeScript and the obligation that
- * the confirmation cannot be bypassed.
+ * the day the suite happens to run. What governs the file is the behaviour above, strict
+ * TypeScript and the obligation that the confirmation cannot be bypassed.
  */
 
 import { fireEvent } from '@testing-library/react';
@@ -429,11 +428,11 @@ describe('TaskItem', () => {
         throw new Error('The confirmation dialog rendered no content element to click.');
       }
 
-      // The content wrapper fills the dialog's box and carries the padding the card used to hold on
-      // the dialog itself, so a click anywhere on the card — the space around the heading and the
-      // message included — targets that wrapper rather than the <dialog> element, which is what a
-      // click on the backdrop targets. Nothing is dismissed, so the second click of a rapid
-      // double-click on a row's Delete cannot cancel the confirmation the first one opened.
+      // The content wrapper fills the dialog's box and carries the card's padding, because the
+      // <dialog> declares none of its own, so a click anywhere on the card — the space around the
+      // heading and the message included — targets that wrapper rather than the <dialog> element,
+      // which is what a click on the backdrop targets. Nothing is dismissed, so the second click of
+      // a rapid double-click on a row's Delete cannot cancel the confirmation the first one opened.
       await user.click(content);
 
       expect(dialog).toHaveAttribute('open');

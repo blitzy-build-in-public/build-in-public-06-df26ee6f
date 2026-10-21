@@ -333,8 +333,7 @@ describe('taskSelectors', () => {
      * Pins a read as a function of the level alone rather than of the calls around it: every
      * expected value comes from `MODIFIER_CASES`, and the second pass reads the three levels in a
      * rotated order, so no level's two reads sit next to each other and an answer that depended on
-     * the call history could not satisfy both. The self-comparison this replaces asserted the unit's
-     * own output against itself, which no deterministic implementation can fail, so it pinned nothing.
+     * the call history could not satisfy both.
      */
     it('keys each level the same pinned class name on every call, in either order', () => {
       // The same three levels one place to the left, so the two passes never share an order.

@@ -10,7 +10,6 @@
  * support module named like a suite would be collected and then fail for holding no test: the name
  * `helpers.tsx` is what keeps it out of that set, so it must not be renamed.
  *
- * This project has no user rules to cite — `review_rules` reports none — so nothing here cites one.
  * What governs the file is the request's own constraints: strict TypeScript, no secrets and no
  * external service, and a layer that runs entirely in jsdom. Nothing here opens a socket, spawns a
  * process, reads the filesystem or replaces `fetch`; a suite that stubs the global `fetch` does so

@@ -17,9 +17,8 @@
  * never clears what was typed. Each rejection case asserts the typed value survives and that the form
  * stays open, so a regression that resets the fields fails here rather than in a browser.
  *
- * This project has no user rules to cite — `review_rules` reports none — so what governs the file is
- * the request's own contract: the four fields, the exact validation messages of AAP 0.5.5, the states
- * of AAP 0.6.2 and the accessible structure of AAP 0.6.5.
+ * What governs the file is the request's own contract: the four fields, the exact validation
+ * messages of AAP 0.5.5, the states of AAP 0.6.2 and the accessible structure of AAP 0.6.5.
  */
 
 import { act, fireEvent, waitFor } from '@testing-library/react';

@@ -39,7 +39,6 @@ export interface Task {
   priority: TaskPriority;
   /** A `YYYY-MM-DD` calendar date, or `null` when the task has none. Past dates are allowed. */
   dueDate: string | null;
-  /** Whether the task is complete. Always present. */
   completed: boolean;
   /** ISO-8601 UTC timestamp with milliseconds, set by the server, never changed by a client. */
   createdAt: string;

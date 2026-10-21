@@ -14,11 +14,12 @@
  * being edited in place. `TaskList` renders the form for that task inside the item being edited, so
  * the edit happens where the user is looking rather than on a page or in an overlay of its own.
  *
- * `styles/global.css` publishes the two classes these regions need — `.app` for the page shell and
- * `.notice` for the region reporting outcomes that are not field errors — and every other style in
- * the interface is scoped to the component that owns it, so the regions below are plain semantic
- * elements. The document owns the language attribute and the mount point, and `main.tsx` owns the
- * React root this component is rendered into.
+ * `styles/global.css` publishes the three classes this screen applies — `.skipLink` for the
+ * keyboard bypass that precedes the shell, `.app` for the page shell and `.notice` for the
+ * region reporting outcomes that are not field errors — and every other style in the interface
+ * is scoped to the component that owns it, so the regions below are plain semantic elements. The
+ * document owns the language attribute and the mount point, and `main.tsx` owns the React root
+ * this component is rendered into.
  */
 
 import { useCallback, useId, useMemo, useState } from 'react';

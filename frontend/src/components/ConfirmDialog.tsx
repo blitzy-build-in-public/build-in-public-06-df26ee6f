@@ -148,9 +148,9 @@ export function ConfirmDialog({
 
   // A modal dialog's backdrop belongs to the dialog element, so a click whose target is the
   // dialog itself landed outside the card and dismisses the confirmation. The card's whole box is
-  // covered by the content wrapper below — the padding the dialog used to carry of its own now
-  // sits on that wrapper — so a click anywhere inside the card, its inner padding included,
-  // targets the wrapper or one of its descendants, and dismisses nothing.
+  // covered by the content wrapper below, which carries the card's padding — the dialog declares
+  // none of its own — so a click anywhere inside the card, its inner padding included, targets
+  // the wrapper or one of its descendants, and dismisses nothing.
   //
   // A press that repeats the one which opened the dialog is not a dismissal. A double-click on a
   // row's Delete asks for the confirmation with its first press and delivers a second one wherever

@@ -128,11 +128,6 @@ export interface UseTasksResult {
    * the rejection is held here instead, where that caller reads it synchronously, and the form it
    * belongs to places each field message beside the control the server named and the message above
    * the fields when it named none.
-   *
-   * Held here because the result offers no other channel: without it a rejected save reaches the
-   * form as the `false` alone, and the server's message — the whole of what the user is told — has
-   * nowhere to be read from. It is the one member this result carries beyond the twelve it is
-   * specified with, and it cannot be dropped without the form losing the server's field messages.
    */
   readActionFailure(): unknown;
   /** Refetches the list with the filters that are active. */

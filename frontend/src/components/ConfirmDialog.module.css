@@ -60,10 +60,11 @@
   background-color: rgb(0 0 0 / 0.45);
 }
 
-/* The card's inner box. It carries the padding the <dialog> itself used to hold — the same value
-   from the same token, so the card's size, rounding, background and inner spacing are unchanged
-   by the move — while covering the whole of the dialog's box, which is what keeps a click
-   anywhere on the card from reaching the dialog element and reading as a click outside it. */
+/* The card's inner box, and the element that carries the card's padding. It covers the whole of
+   the dialog's box, which the <dialog> above leaves unpadded, so a click on the card, its inner
+   padding included, reaches this element rather than the dialog element, and never reads as a
+   click outside the card. The inner spacing is var(--space-5), a published spacing token on the
+   interface's scale. */
 .content {
   padding: var(--space-5);
 }

@@ -16,7 +16,6 @@
  * restyled bar keeps passing; and nothing here performs I/O: the component takes its data and its
  * callback as props, so no client, no `fetch` stub, no server and no database are involved.
  *
- * This project has no user rules to cite — `review_rules` reports none — so nothing here cites one.
  * What governs the file is the interface contract (`status` of `all | open | completed`, `priority`
  * of `low | medium | high` or none at all, `sort` of `dueDate | priority | createdAt`) together with
  * the request's own constraints: strict TypeScript, no secrets and no external service, and a layer
