@@ -6,13 +6,14 @@
  * rather than inherited — no per-request logging, no HEAD twins, the framework's error paths and the
  * transport's own request-line failures handed to the error contract, and a router parameter bound
  * that lets the supplied identifier reach the route — the error contract's one installation, the
- * response-header policy every response carries, and the two route modules that together register the
- * six routes under `/api`. It constructs nothing else — no database, no repository, no clock — because
- * the composed use cases it drives are handed to it, and it does not listen, because choosing the
- * address and binding the socket is the entry point's job. That is what lets the whole surface,
- * failure paths included, be driven in-process through `app.inject()`.
+ * response-header policy every response carries, and the three route modules that between them
+ * register the seven routes: the six `/api` routes of the task and liveness modules, and the
+ * unprefixed `/good-evening` route of the greeting module. It constructs nothing else — no database,
+ * no repository, no clock — because the composed use cases it drives are handed to it, and it does
+ * not listen, because choosing the address and binding the socket is the entry point's job. That is
+ * what lets the whole surface, failure paths included, be driven in-process through `app.inject()`.
  *
- * Layering: the HTTP interface layer. It imports the two sibling route modules and the error
+ * Layering: the HTTP interface layer. It imports the three sibling route modules and the error
  * mapper, never an infrastructure module, so it can wire the port-facing use cases without ever
  * naming how a task is stored.
  */
@@ -24,6 +25,7 @@ import {
   answerWithErrorContract,
   installErrorHandling,
 } from './errorMapper.js';
+import { registerGoodEveningRoutes } from './goodEveningRoutes.js';
 import { registerHealthRoutes } from './healthRoutes.js';
 import type { AppDependencies } from './taskRoutes.js';
 import { registerTaskRoutes } from './taskRoutes.js';
@@ -78,7 +80,7 @@ const MAX_PATH_PARAMETER_LENGTH = 16 * 1024;
  *
  * @param deps The composed use cases, each reached only through its route's contract.
  * @param options The logger level for this application.
- * @returns The configured application, with all six routes registered and not listening.
+ * @returns The configured application, with all seven routes registered and not listening.
  */
 export function buildApp(deps: AppDependencies, options: BuildAppOptions): FastifyInstance {
   const app = Fastify({
@@ -93,8 +95,8 @@ export function buildApp(deps: AppDependencies, options: BuildAppOptions): Fasti
     // context from the log call in `errorMapper.ts`, which supplies the context itself.
     logController: new LogController({ disableRequestLogging: true }),
 
-    // The framework registers a HEAD twin of every GET route by default, which would serve nine
-    // method-and-path pairs where the contract names six endpoints. With the twins off, a HEAD falls
+    // The framework registers a HEAD twin of every GET route by default, which would serve eleven
+    // method-and-path pairs where the contract names seven endpoints. With the twins off, a HEAD falls
     // to the not-found handler and is answered with the contract's 404, because the contract defines
     // no 405.
     exposeHeadRoutes: false,
@@ -119,7 +121,7 @@ export function buildApp(deps: AppDependencies, options: BuildAppOptions): Fasti
   });
 
   // The hardening policy is applied here, once, rather than per route: one hook covers every response
-  // the router dispatches — the six routes, the not-found answer, every failure the error contract
+  // the router dispatches — the seven routes, the not-found answer, every failure the error contract
   // shapes — so a route added later cannot answer without it. The two failures the framework answers
   // before a route is matched, a path it cannot percent-decode and a parameter past the router's
   // limit, never reach this hook, and neither does a request the transport refuses: the error
@@ -140,6 +142,7 @@ export function buildApp(deps: AppDependencies, options: BuildAppOptions): Fasti
 
   registerTaskRoutes(app, deps);
   registerHealthRoutes(app);
+  registerGoodEveningRoutes(app);
 
   return app;
 }
