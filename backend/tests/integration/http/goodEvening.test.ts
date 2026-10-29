@@ -273,6 +273,13 @@ describe('GET /good-evening (composed application)', () => {
     // The body is the string itself — no envelope, no wrapper, no trailing newline — so a client
     // reads exactly the words the contract names and nothing beside them.
     expect(response.body).toBe(EXPECTED_GOOD_EVENING_BODY);
+
+    // The route states none of the application's shared behaviour, so the hardening policy reaches
+    // this reply only by registration: one `onSend` hook covers every response the router dispatches.
+    // Asserted on the route's own 200 rather than left to the replies the hook cannot reach.
+    expect(headerValue(response, 'x-content-type-options')).toBe('nosniff');
+    expect(headerValue(response, 'x-frame-options')).toBe('DENY');
+    expect(headerValue(response, 'cache-control')).toBe('no-store');
   });
 
   it('answers consecutive requests with identical status, media type and body', async () => {
