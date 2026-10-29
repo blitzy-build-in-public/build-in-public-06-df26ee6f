@@ -45,7 +45,7 @@ const CASE_CHANGED_PATH = '/Good-Evening';
 
 /**
  * The greeting path under the `/api` prefix the other six routes share. It matches nothing, which is
- * what pins the new route to its own unprefixed path instead of inside the API's prefix.
+ * what pins the greeting route to its own unprefixed path instead of inside the API's prefix.
  */
 const PREFIXED_MISS_PATH = '/api/good-evening';
 
@@ -327,7 +327,7 @@ describe('GET /good-evening (composed application)', () => {
     expect(errorCodeFrom(prefixed)).toBe('NOT_FOUND');
   });
 
-  it('answers POST of the new path with the not-found contract and no 405', async () => {
+  it('answers POST /good-evening with the not-found contract and no 405', async () => {
     const application = requireApp();
 
     const response = await application.inject({ method: 'POST', url: GOOD_EVENING_PATH });
@@ -339,7 +339,7 @@ describe('GET /good-evening (composed application)', () => {
     expect(errorCodeFrom(response)).toBe('NOT_FOUND');
   });
 
-  it('answers HEAD of the new path with the not-found contract and still serves its GET', async () => {
+  it('answers HEAD /good-evening with the not-found contract, then serves its GET', async () => {
     const application = requireApp();
 
     const response = await application.inject({ method: 'HEAD', url: GOOD_EVENING_PATH });
@@ -365,17 +365,17 @@ describe('GET /good-evening (composed application)', () => {
     expect(error['message']).toContain('HEAD');
     expect(error['message']).toContain(GOOD_EVENING_PATH);
 
-    // The GET the twin was never registered for still answers, so nothing above rests on the route
+    // The GET the twin was never registered for answers, so nothing above rests on the route
     // having been disturbed by the HEAD that preceded it.
     const get = await application.inject({ method: 'GET', url: GOOD_EVENING_PATH });
     expect(get.statusCode).toBe(200);
     expect(get.body).toBe(EXPECTED_GOOD_EVENING_BODY);
   });
 
-  it('leaves the existing endpoints serving in the same composition', async () => {
+  it('leaves the task and liveness endpoints serving in the same composition', async () => {
     const application = requireApp();
 
-    // The liveness route, byte-for-byte the body it answered before the greeting route existed:
+    // The liveness route, byte-for-byte the body its contract fixes:
     // `Object.keys` is asserted separately, so a body that grew a version or a task count fails here
     // instead of passing on `status` alone.
     const health = await application.inject({ method: 'GET', url: HEALTH_PATH });
@@ -385,14 +385,14 @@ describe('GET /good-evening (composed application)', () => {
     expect(Object.keys(healthBody)).toStrictEqual(['status']);
     expect(healthBody).toStrictEqual(EXPECTED_HEALTH_BODY);
 
-    // The listing route still answers a JSON array; what a task looks like is the task routes' own
+    // The listing route answers a JSON array; what a task looks like is the task routes' own
     // suite's business, so this suite reads the shape alone.
     const listing = await application.inject({ method: 'GET', url: TASKS_PATH });
     expect(listing.statusCode).toBe(200);
     expect(Array.isArray(listing.json())).toBe(true);
 
-    // A path no route matches still gets the contract's 404, so the greeting route was added beside
-    // the existing handlers rather than in front of them.
+    // A path no route matches gets the contract's 404, so the greeting route sits beside the other
+    // handlers rather than in front of them.
     const unmatched = await application.inject({ method: 'GET', url: UNMATCHED_PATH });
     expect(unmatched.statusCode).toBe(404);
     expect(errorCodeFrom(unmatched)).toBe('NOT_FOUND');
@@ -403,7 +403,7 @@ describe('GET /good-evening (composed application)', () => {
 
     // The application is the one the process itself serves from, composed over the real migrations
     // and use cases, so the request below answers only because the factory registered the greeting
-    // route beside the six existing ones before the composition returned.
+    // route beside the other six before the composition returned.
     await application.ready();
 
     const response = await application.inject({ method: 'GET', url: GOOD_EVENING_PATH });

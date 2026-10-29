@@ -9,8 +9,8 @@ import type { FastifyInstance } from 'fastify';
  * `text/plain; charset=utf-8`, which is not the media type the contract names.
  *
  * The path is unprefixed, unlike the task and liveness families under `/api`, because the published
- * wire contract fixes `/good-evening` exactly and so outranks the prefix convention; Rule 3
- * ("21-Oct") asks that established conventions be applied uniformly, so the departure is deliberate.
+ * wire contract fixes `/good-evening` exactly and so outranks the prefix convention; the departure
+ * is deliberate.
  *
  * Layering: the HTTP interface layer, beside the other per-family route modules. It imports the
  * framework's type and nothing else, so the route reaches no store, no use case and no
